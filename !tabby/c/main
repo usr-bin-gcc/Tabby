@@ -1,0 +1,938 @@
+/*******************************************************************************
+
+File        : c.main
+
+Date        : Sunday 7th November 2021
+
+Author      : Gavin Cawley
+
+Description : Program to manage multiple (!SrcEdit) windows by groupin them all
+              under an external tab bar.
+
+History     : 07/11/2021 v0.01 - started work
+
+*******************************************************************************/
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+                 
+#include "alarm.h"
+#include "bbc.h"
+#include "wimp.h"
+#include "wimpt.h"
+#include "resspr.h"
+#include "baricon.h"
+#include "res.h"
+#include "event.h"
+#include "menu.h"
+#include "dbox.h"
+#include "werr.h"
+#include "win.h"
+#include "template.h"
+#include "font.h"
+#include "colourtran.h"
+
+#include "logger.h"
+   
+#define APP_NAME "Tabby"
+#define MENU_ITEMS ">Info,Quit"
+                 
+#define MAX_TABS (256)
+                    
+#define IMENU_INFO 1
+#define IMENU_QUIT 2
+
+menu imenu;       
+
+int active = -1;   // the currently active tab (-1 if no tabs)               
+
+wimp_w gui_handle = 0, tabPane_handle = 0, active_handle = 0;
+
+wimp_wstate gui_state, active_state, tabPane_state;
+                 
+#define STATE_SEARCHING 0
+#define STATE_CAPTURING 1
+#define STATE_LOCKED    2
+                         
+int state = STATE_SEARCHING;
+
+typedef struct _Tab
+{  
+   wimp_w handle;
+
+   wimp_i icon;
+
+   int scx, scy;   // scroll bar positions
+}
+Tab;
+          
+typedef struct _Tabs
+{
+   Tab tab[MAX_TABS];
+
+   int n;
+
+   int active;
+}
+Tabs;             
+
+Tabs tabs;
+
+#ifndef strdup
+
+char *strdup(const char *s)
+{
+   size_t size = strlen(s) + 1;
+
+   char *str = (char*)malloc(size);
+
+   if (str != NULL) 
+   {
+      memcpy(str, s, size);
+   }
+ 
+   return str;
+}
+
+#endif
+
+char block[32768];
+         
+/*******************************************************************************
+
+Function    : findTask
+
+Parameters  : char* - name of WIMP task
+
+Returns     : wimp_t - task handle
+
+Description : Returns the task handle of the named task, or zero if no such
+              task is currently running.
+
+*******************************************************************************/
+
+#define TaskManager_EnumerateTasks 0x42681
+
+wimp_t findTask(char *task)
+{
+   int buffer[16];
+
+   os_regset regs;
+
+   regs.r[0] = 0;
+                         
+   do
+   { 
+      regs.r[1] = (int)&buffer;
+      regs.r[2] = 64;
+
+      wimpt_complain(os_swix(TaskManager_EnumerateTasks, &regs));
+
+      for (int *block = buffer; block < (int*)regs.r[1]; block += 4)
+      {                               
+         if (strcmp(task, (char*)block[1]) == 0)
+         {
+            return block[0];
+         }
+      }  
+   }
+   while (regs.r[0] >= 0);
+
+   return 0;
+}
+                                                                                
+/*******************************************************************************
+
+Function    : identifyOwner 
+
+Parameters  : wimp_w - window handle
+
+Returns     : wimp_t - task handle 
+
+Description : Returns the task handle of the task that owns the specified
+              window.
+
+*******************************************************************************/
+   
+#define Wimp_SendMessage 0x400E7
+                                                         
+wimp_t identifyOwner(wimp_w window)
+{   
+   os_regset regs;
+
+   wimp_msghdr msg; 
+
+   msg.size     = 20;   
+   msg.your_ref = 0;  
+
+   regs.r[0] = 19; 
+   regs.r[1] = (int)&msg;
+   regs.r[2] = window;
+
+   wimpt_complain(os_swix(Wimp_SendMessage, &regs));
+
+   return (wimp_t)regs.r[2];   
+}
+
+/*******************************************************************************
+
+Function    : extractLabel
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+                  
+void forceRedraw(wimp_w handle)
+{
+   wimp_redrawstr redrawstr;
+
+   wimp_winfo winfo;        
+
+   winfo.w = handle;
+
+   wimp_get_wind_info(&winfo);                                                   
+
+   redrawstr.w = handle;
+                                    
+   switch (3)
+   {
+      case 1:
+      {
+         // force redraw (absolute coordinates)
+                                 
+         redrawstr.w      = -1;
+         redrawstr.box.x0 = winfo.info.box.x0;
+         redrawstr.box.y0 = winfo.info.box.y0;
+         redrawstr.box.x1 = winfo.info.box.x1;
+         redrawstr.box.y1 = winfo.info.box.y1;
+         redrawstr.scx    = winfo.info.scx;
+         redrawstr.scy    = winfo.info.scx;
+                             
+         break;
+      }
+      case 2:
+      {                               
+         // force redraw (extent)
+
+         redrawstr.box.x0 = winfo.info.ex.x0;
+         redrawstr.box.y0 = winfo.info.ex.y0;
+         redrawstr.box.x1 = winfo.info.ex.x1;
+         redrawstr.box.y1 = winfo.info.ex.y1;
+         
+         break;
+      }        
+      case 3:
+      {    
+         // force redraw (extended syntax)
+
+         redrawstr.box.x0 = 0x4B534154;
+         redrawstr.box.y0 = 0;
+      
+         break;
+      }     
+      case 4:
+      {        
+         wimp_wstate wstate;
+
+         wimp_get_wind_state(handle, &wstate); 
+                                       
+         redrawstr.w      = handle;
+         redrawstr.box.x0 = wstate.o.x;
+         redrawstr.box.y0 = wstate.o.box.y0 - wstate.o.box.y1 + wstate.o.y;
+         redrawstr.box.x1 = wstate.o.box.x1 - wstate.o.box.x0 + wstate.o.x; 
+         redrawstr.box.y1 = -wstate.o.y;
+
+         break;
+      }
+   }
+                            
+
+   wimp_force_redraw(&redrawstr);        
+}
+
+/*******************************************************************************
+
+Function    : extractLabel
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+                      
+char *extractLabel(char *path)
+{  
+   char *token[256];
+
+   char buffer[256];
+
+   int n = 0;
+
+   for (char *tok = strtok(path, "."); tok != NULL; tok = strtok(NULL, "."))
+   {
+      token[n++] = tok;
+   }
+                           
+   if (n > 1)
+   {
+      if (strcmp(token[n-2], "c") == 0 || 
+          strcmp(token[n-2], "h") == 0)
+      {
+         sprintf(buffer, "%s.%s", token[n-1], token[n-2]);
+      }   
+      else
+      {
+         sprintf(buffer, "%s", token[n-1]);
+      }
+   }
+
+   return strdup(buffer); 
+}
+                                                                                
+/*******************************************************************************
+
+Function    : selectTab 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+
+void selectTab(int tab)                                                         
+{  
+   wimp_redrawstr r;
+   
+   wimp_icon info;
+
+   if (tab != active)
+   {  
+      if (active != -1)
+      {                 
+         // change colour of active tab
+
+         wimp_get_icon_info(tabPane_handle, active, &info); 
+
+         info.data.indirecttext.validstring[1] = '1';
+
+         wimp_set_icon_state(tabPane_handle, active, 
+            (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
+            (wimp_iconflags)(0xF0000000U | wimp_IFILLED));    
+         
+         // hide active pane
+
+         wimp_get_wind_state(active_handle, &active_state); 
+                                 
+         active_state.o.behind = -3;
+
+         wimpt_noerr(wimp_open_wind(&active_state.o));
+
+         // store scroll positions
+
+         tabs.tab[active].scx = active_state.o.x;
+         tabs.tab[active].scy = active_state.o.y;
+      }
+      else
+      {
+         //wimp_get_wind_state(tabs.tab[tab].handle, &active_state); 
+      }
+
+      // change colour of selected tab
+
+      wimp_get_icon_info(tabPane_handle, tab, &info); 
+
+      info.data.indirecttext.validstring[1] = '2';
+
+      wimp_set_icon_state(tabPane_handle, tab, 
+         (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
+         (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
+
+      // reopen selected tab              
+
+      active = tab;                                                
+                                         
+      active_handle = tabs.tab[active].handle;
+                    
+      // wimp_get_wind_state(active_handle, &active_state); 
+      
+      active_state.o.w      = active_handle;   
+      active_state.o.behind = gui_handle;
+      active_state.o.x      = tabs.tab[active].scx;
+      active_state.o.y      = tabs.tab[active].scy;
+
+      wimpt_noerr(wimp_open_wind(&active_state.o));                                                 
+
+      forceRedraw(active_handle);
+
+   }
+
+   r.w      = tabPane_handle;
+   r.box.x0 = 0;
+   r.box.y0 = -4096;
+   r.box.x1 = 4096;
+   r.box.y1 = 0;
+
+   wimp_force_redraw(&r);     
+}
+
+static void tabPane_mouseClickHandler(wimp_mousestr *ms, 
+                                      wimp_bbits mbits,
+                                      Tabs *tabs)
+{     
+   wimp_icon info;
+
+   wimp_get_icon_info(tabPane_handle, ms->i, &info);
+
+   char *valid = info.data.indirecttext.validstring;
+            
+   if (valid[1] == '1')
+   {
+      selectTab(ms->i);
+   }
+}          
+
+/*******************************************************************************
+
+Function    : 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+                                                                                
+void setState(int newState)
+{
+   wimp_icon info;
+
+   wimp_get_icon_info(gui_handle, 0, &info);
+
+   char *valid = info.data.indirecttext.validstring;
+
+   switch (newState)
+   {          
+      case STATE_SEARCHING:
+      {         
+         sprintf(valid, "R5;Sred_led,red_led");       
+
+         state = STATE_SEARCHING;
+
+         break;
+      }
+      case STATE_CAPTURING:
+      {                 
+         sprintf(valid, "R5;Syellow_led,yellow_led");       
+         
+         state = STATE_CAPTURING;
+
+         break;
+      }
+      default:                   
+      { 
+         sprintf(valid, "R5;Sgreen_led,green_led");       
+
+         state = STATE_LOCKED;
+      }
+   }                     
+
+   // redraw the icon
+     
+   wimp_redrawstr r;
+
+   r.w      = gui_handle;
+   r.box.x0 = 0;
+   r.box.y0 = -64;
+   r.box.x1 = +64;
+   r.box.y1 = 0;
+
+   wimp_force_redraw(&r);
+}
+
+/*******************************************************************************
+
+Function    : 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+
+void gui_open(wimp_openstr *openstr)
+{   
+   // open tab pane
+          
+   openstr->box.x0 = openstr->box.x0 + 128;                    
+   openstr->w      = tabPane_handle;
+         
+   wimpt_noerr(wimp_open_wind(openstr));
+
+    // open main window
+
+    openstr->w      = gui_handle;
+    openstr->box.x0 = openstr->box.x0 - 128;                    
+    openstr->behind = tabPane_handle;
+            
+    wimpt_noerr(wimp_open_wind(openstr));
+}
+
+void gui_closeDown(void)
+{                                                     
+   // bring back all of the windows
+     
+   for (int i = 0; i < tabs.n; i++)
+   {
+      wimp_get_wind_state(tabs.tab[i].handle, &active_state); 
+      
+      active_state.o.behind = -1;
+
+      wimpt_noerr(wimp_open_wind(&active_state.o));   
+
+      forceRedraw(tabs.tab[i].handle);
+   }
+}
+   
+/*******************************************************************************
+
+Function    : 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+
+void gui_eventHandler(wimp_eventstr *e, void *handle)
+{
+   switch(e->e)
+   {
+      case wimp_EOPEN:   // maximise or minimise window 
+      {
+         if (active_handle != 0)
+         {     
+            wimp_get_wind_state(active_handle, &active_state); 
+
+            int height = active_state.o.box.y1 - active_state.o.box.y0;
+            
+            active_state.o.w      = active_handle;
+            active_state.o.box.x1 = e->data.o.box.x1 - 40;
+            active_state.o.box.y1 = e->data.o.box.y0 - 40 - 2;
+            active_state.o.box.x0 = e->data.o.box.x0;
+            active_state.o.box.y0 = active_state.o.box.y1 - height;
+            active_state.o.behind = e->data.o.behind;
+
+            wimpt_noerr(wimp_open_wind(&active_state.o));
+         }
+                                      
+         gui_open(&(e->data.o));
+      
+         break;
+      }
+      case wimp_ECLOSE:   // close window
+      {
+         gui_closeDown();
+
+         wimpt_noerr(wimp_close_wind(e->data.o.w));
+         wimpt_noerr(wimp_close_wind(tabPane_handle));
+       
+         break;
+      }
+      case wimp_EBUT:   // mouse button change
+      {                                      
+         if (e->data.but.m.i == 0)
+         {                  
+            if (state == STATE_LOCKED)
+            {
+               setState(STATE_SEARCHING);
+            }
+            else
+            {        
+               setState(STATE_LOCKED);
+            }
+         }
+
+         break;
+      }
+   }
+}
+
+void tabPane_eventHandler(wimp_eventstr *e, void *handle)
+{
+   switch(e->e)
+   {
+      case wimp_EOPEN:   // maximise or minimise window 
+      {
+         wimpt_noerr(wimp_open_wind(&e->data.o));
+
+         break;
+      }
+      case wimp_ECLOSE:   // close window
+      {
+         wimpt_noerr(wimp_close_wind(e->data.o.w));
+       
+         break;
+      } 
+      case wimp_EBUT:
+      {        
+         tabPane_mouseClickHandler(&(e->data.but.m), e->data.but.b,
+            (Tabs*)handle);
+
+         break;
+      }
+   }
+}
+
+void tabPane_create(void)
+{                        
+   wimp_wind *window = template_syshandle("TabPane");
+
+   if (window == 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   if (wimpt_complain(wimp_create_wind(window, &tabPane_handle)) != 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   win_register_event_handler(tabPane_handle, tabPane_eventHandler, 0);
+
+   tabs.n = 0;
+}
+           
+void gui_create(void)
+{                        
+   wimp_wind *window = template_syshandle("Window");
+
+   if (window == 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   if (wimpt_complain(wimp_create_wind(window, &gui_handle)) != 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   win_register_event_handler(gui_handle, gui_eventHandler, 0);
+
+   tabPane_create();
+}
+
+
+
+static void info_about(void)
+{
+   dbox d = dbox_new("ProgInfo");
+
+   if (d != NULL)
+   {
+      dbox_show(d);        
+      dbox_fillin(d);       
+      dbox_dispose(&d);     
+   }
+}
+
+static menu ipremenuproc(void *handle)
+{
+   return imenu;
+}
+
+static void imenuproc(void *handle, char *hit)
+{
+   switch (hit[0])  
+   {                
+      case IMENU_INFO:
+      {
+         info_about();
+
+         break;
+      }
+      case IMENU_QUIT:
+      {
+         gui_closeDown();
+
+         exit(EXIT_SUCCESS);
+
+         break;
+      }
+   }
+}
+
+static void icon_left_click(wimp_i icon)
+{
+   //wimp_wstate active_handle;
+
+   //wimpt_complain(wimp_get_wind_state(gui_handle, &active_handle));
+
+   //gui_open(&(active_handle.o));
+}
+                                           
+
+int intersects(wimp_box *x, wimp_box *y)
+{                          
+   if (x->x0 > y->x1) return 0;
+   if (x->x1 < y->x0) return 0;
+   if (x->y0 > y->y1) return 0;
+   if (x->y1 < y->y0) return 0; 
+   
+   return 1;
+}
+
+void hideTab(int tab)
+{
+   
+}
+                                 
+void addTab(wimp_w handle)
+{                              
+   // get info about the window
+                      
+   wimp_winfo *info = (wimp_winfo*)&block;
+
+   info->w = handle;
+   
+   wimpt_complain(wimp_get_wind_info(info));
+      
+   char *filename;
+
+   if (info->info.titleflags & wimp_INDIRECT)
+   {                                                                  
+      char buffer[512];
+
+      wimpt_complain(wimp_transferblock(identifyOwner(handle),
+                         info->info.title.indirecttext.buffer,
+                         wimpt_task(),
+                         buffer,
+                         info->info.title.indirecttext.bufflen));
+
+      filename = extractLabel(buffer);
+   }  
+   else
+   {                              
+      char buffer[13];          
+
+      buffer[0] = '\0';
+
+      strncat(buffer, info->info.title.text, 12);
+
+      filename = strdup(buffer);
+   }
+      
+   // create tab icon
+
+   wimp_icreate icreatestr;
+                                                      
+   icreatestr.w = tabPane_handle;                   
+                      
+   icreatestr.i.flags  = (wimp_iconflags)
+                       ( wimp_ITEXT
+                       | wimp_IHCENTRE
+                       | wimp_IVCENTRE
+                       | wimp_INDIRECT
+                       | wimp_IBORDER
+                       | wimp_BCLICKAUTO << 12
+                       | 7U << 24U     // foreground colour
+                       | 1U << 28U);   // background colour
+
+   icreatestr.i.data.indirecttext.buffer      = filename;
+   icreatestr.i.data.indirecttext.validstring = strdup("R1"); 
+   icreatestr.i.data.indirecttext.bufflen     = strlen(filename);
+   icreatestr.i.box.x0 = tabs.n*240;
+   icreatestr.i.box.y0 = -52 -16;
+   icreatestr.i.box.x1 = icreatestr.i.box.x0 + 240;
+   icreatestr.i.box.y1 = -16;
+         
+   wimp_create_icon(&icreatestr, &tabs.tab[tabs.n].icon);
+         
+   // update records
+
+   tabs.tab[tabs.n].handle = handle;
+   tabs.tab[tabs.n].scx    = info->info.scx;
+   tabs.tab[tabs.n].scy    = info->info.scy;
+
+   selectTab(tabs.n++); 
+          
+   // force redraw of tab bar
+
+   wimp_redrawstr redrawstr;
+
+   redrawstr.w      = tabPane_handle;
+   redrawstr.box.x0 = icreatestr.i.box.x0;
+   redrawstr.box.y0 = icreatestr.i.box.y0;
+   redrawstr.box.x1 = icreatestr.i.box.x1;
+   redrawstr.box.y1 = icreatestr.i.box.y1;
+
+   wimp_force_redraw(&redrawstr);
+}
+
+void monitor(int time, void *handle)
+{   
+   int delay = 1;
+
+   static wimp_w window = 0;
+              
+   if (state == STATE_SEARCHING)
+   {           
+      // seek to capture a window  
+                         
+      if (!wimp_get_wind_state(gui_handle, &gui_state))
+      { 
+         wimp_wstate wstate;
+                                        
+         wstate.o.behind = gui_state.o.behind;
+
+         while (wstate.o.behind != -1)         
+         { 
+            window = wstate.o.behind;
+
+            wimp_get_wind_state(window, &wstate);                                  
+           
+            if (window != tabPane_handle)
+            {
+               if (intersects(&gui_state.o.box, &wstate.o.box))
+               {
+                  delay = 100;        
+               
+                  setState(STATE_CAPTURING);
+
+                  break;
+               }
+            }
+         }
+      }
+   }
+   else if (state == STATE_CAPTURING)
+   {
+      // re-open captured window beneath the tab bar
+                     
+      if (active_handle == 0)
+      {
+         wimp_get_wind_state(window, &active_state); 
+      
+         int height = active_state.o.box.y1 - active_state.o.box.y0;
+
+         active_state.o.box.x1 = gui_state.o.box.x1 - 40;
+         active_state.o.box.y1 = gui_state.o.box.y0 - 40 - 2;
+         active_state.o.box.x0 = gui_state.o.box.x0;
+         active_state.o.box.y0 = gui_state.o.box.y1 - height;
+         active_state.o.w      = window;
+         active_state.o.behind = -1;
+
+         wimpt_noerr(wimp_open_wind(&active_state.o));      
+      }
+
+      addTab(window);      
+                                                        
+      setState(STATE_LOCKED);
+   }
+   else if (active_handle != 0)
+   {                            
+      // monitor behaviour of the captured window
+
+      wimp_wstate wstate;
+
+      wimp_get_wind_state(active_handle, &wstate); 
+      
+      // has the window been resized or moved
+
+      if ((active_state.o.box.x0 != wstate.o.box.x0) ||
+          (active_state.o.box.y0 != wstate.o.box.y0) ||
+          (active_state.o.box.x1 != wstate.o.box.x1) ||
+          (active_state.o.box.y1 != wstate.o.box.y1))
+      {
+         memcpy(&active_state, &wstate, sizeof(wimp_wstate));
+
+         gui_state.o.box.x0 = active_state.o.box.x0;
+         gui_state.o.box.y0 = active_state.o.box.y1 + 40 + 2;
+         gui_state.o.box.x1 = active_state.o.box.x1 + 40;
+         gui_state.o.box.y1 = gui_state.o.box.y0 + 64;
+         gui_state.o.behind = active_handle;
+
+         gui_open(&gui_state.o);
+      }
+   }
+
+   alarm_set(alarm_timenow() + delay, monitor, NULL);
+}
+
+int main(void)
+{                                         
+   wimpt_init(APP_NAME);
+
+   res_init(APP_NAME);   
+
+   template_init();              
+
+   dbox_init();     
+
+   gui_create();
+
+   baricon("!tabby", (int)resspr_area(), icon_left_click);
+
+   imenu = menu_new(APP_NAME, MENU_ITEMS);
+                    
+   if (imenu == NULL)
+   {
+      return EXIT_FAILURE;
+   }
+
+   if (!event_attachmenumaker(win_ICONBAR, ipremenuproc, imenuproc, 0))
+   {
+      return EXIT_FAILURE;
+   }                    
+
+   // register icon menu and middle click handler 
+
+   if (!event_attachmenumaker(win_ICONBAR, ipremenuproc, imenuproc, 0))
+   {
+      return FALSE;
+   }               
+
+   LOG("main", "Hello from %s", "Tabby");
+
+   // open main window
+
+   wimpt_complain(wimp_get_wind_state(gui_handle, &gui_state));
+
+   gui_open(&gui_state.o);
+
+   setState(STATE_LOCKED);
+
+   // start animation
+
+   alarm_init();
+
+   alarm_set(alarm_timenow() + 100, monitor, NULL);
+
+   // main even processing loop
+
+   while (TRUE) 
+   {
+      event_process();
+   }
+                    
+
+   wimp_closedown();
+
+   return EXIT_SUCCESS;
+}
+
+/******************************************************************************/

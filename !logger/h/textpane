@@ -1,0 +1,124 @@
+/*******************************************************************************
+
+File        : h.textpane
+
+Date        : Sunday 25th April 2021
+
+Author      : Gavin Cawley
+
+Description : General purpose multi-line text display pane.
+
+To do       :              
+
+History     : 25/04/2021 v0.00 - adapted from the editor window of Leopard IDE
+
+*******************************************************************************/
+                        
+#include <limits.h>
+#include <stdio.h>      
+#include <stdlib.h>
+#include <string.h>
+
+#include "wimp.h"     
+#include "wimpt.h"
+#include "win.h"
+#include "template.h"
+#include "font.h"
+#include "colourtran.h"          
+                   
+typedef struct TextPaneStruct
+{  
+   // text storage
+
+   char **line;      
+
+   int lines;        
+
+   int capacity;  
+
+   // window management information
+
+   wimp_w handle;   
+
+   wimp_redrawstr redraw;   
+
+   font font;     
+}
+TextPane; 
+
+/*******************************************************************************
+
+Function    : textPane_create
+
+Parameters  : char *template - template name
+
+Returns     : TextPane * - pointer to the new TextPane structure.
+
+Description : Create a new TextPane, based on the specified template.
+
+*******************************************************************************/
+
+TextPane *textPane_create(char *template);
+
+/*******************************************************************************
+
+Function    : textPane_addLine 
+
+Parameters  : TextPane *tp   - pointer to TextPane structure
+              char     *line - pointer to null-terminated string
+
+Returns     : void
+
+Description : Add a copy of a null-terminated stting to the specified TextPane.
+              The string is duplicated on the heap as the memory used for the
+              argument is likely to be a buffer that may be subsequently
+              reused. 
+
+*******************************************************************************/
+
+void textPane_addLine(TextPane *tp, char *line);
+                                                                                
+/*******************************************************************************
+
+Function    : textPane_destroy
+
+Parameters  : TextPane *tp - pointer to a TextPane structure
+
+Returns     : void
+
+Description : Close a TextPane and free all associated dynamically allocated
+              memory.
+
+*******************************************************************************/
+
+void textPane_destroy(TextPane *tp);
+                                                                                 
+/*******************************************************************************
+
+Function    : textPane_forceRedraw
+
+Parameters  : TextPane *tp - pointer to TextPane object
+
+Returns     : void
+
+Description : Force a redraw of the whole work area
+
+*******************************************************************************/
+
+void textPane_forceRedraw(TextPane *tp);
+
+/*******************************************************************************
+
+Function    : textPane_clear
+
+Parameters  : TextPane *tp - pointer to TextPane object
+
+Returns     : void
+
+Description : Clear a text area, and free memory allocated on the heap
+
+*******************************************************************************/
+
+void textPane_clear(TextPane *tp);
+
+/******************************************************************************/

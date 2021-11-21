@@ -1,0 +1,394 @@
+/*******************************************************************************
+
+File        : c.textpane
+
+Date        : Sunday 25th April 2021
+
+Author      : Gavin Cawley
+
+Description : General purpose multi-line text display pane.
+
+To do       :              
+
+History     : 25/04/2021 v0.00 - adapted from the editor window of Leopard IDE
+
+*******************************************************************************/
+                        
+#include <limits.h>
+#include <stdio.h>      
+#include <stdlib.h>
+#include <string.h>
+
+#include "bbc.h"
+#include "wimp.h"     
+#include "wimpt.h"
+#include "win.h"
+#include "template.h"
+#include "font.h"
+#include "colourtran.h"       
+
+#include "textpane.h"   
+
+/*******************************************************************************
+
+Function    : stringdup
+
+Parameters  : const char * s - pointer to string to be duplicated
+
+Returns     : char * - pointer to duplicated string
+
+Description : Utility function to duplicate a null-terminated string on the 
+              heap.
+
+*******************************************************************************/
+
+static char *stringdup(const char *s)
+{
+  size_t size = strlen(s) + 1;
+
+  char *str = (char*)malloc(size);
+
+  if (str) memcpy(str, s, size);
+
+  return str;
+}
+
+/*******************************************************************************
+
+Function    : textPane_redraw
+
+Parameters  : wimp_w whandle
+
+Returns     : void 
+
+Description : Function called to redraw the textPane, when requested by the 
+              WIMP.
+
+*******************************************************************************/
+
+void textPane_redraw(TextPane *tp)
+{
+   BOOL more;
+
+   tp->redraw.w = tp->handle;
+
+   wimpt_complain(wimp_getwindowoutline(&(tp->redraw)));
+
+   wimpt_noerr(wimp_redraw_wind(&(tp->redraw), &more));   
+
+   wimpt_complain(font_setfont(tp->font));
+
+   wimp_paletteword bck, fgd;
+
+   fgd.word = (int)0x00000000U;
+   bck.word = (int)0xFFFFFF00U;
+
+   int max = 7;
+
+   colourtran_setfontcolours(&(tp->font), &bck, &fgd, &max);
+
+   while(more)
+   {  
+      // screen co-ordinates of the work area origin
+                                                          
+      int x = tp->redraw.box.x0 - tp->redraw.scx;
+      int y = tp->redraw.box.y1 - tp->redraw.scy;                 
+
+      // required work-area coordinates of the update rectangle
+
+      int way0 = tp->redraw.g.y0 - tp->redraw.box.y1 + tp->redraw.scy;
+      int way1 = tp->redraw.g.y1 - tp->redraw.box.y1 + tp->redraw.scy;       
+
+      // work out first and last lines that need to be re-painted
+
+      int first = (-way1 - 36)/36;
+      int last  = (-way0)/36;
+
+      first = first > 0 ? first : 0;
+      last  = last  < tp->lines ? last  : tp->lines - 1;
+                                            
+      // re-paint required lines
+
+      for (int i = first; i <= last; i++)
+      {                                  
+         font_paint(tp->line[i], font_OSCOORDS, x+8, y-36*i - 36);
+      }
+
+      wimp_get_rectangle(&(tp->redraw), &more);
+   }   
+}          
+
+/*******************************************************************************
+
+Function    : textPane_eventHandler
+
+Parameters  : wimp_eventstr *e
+              void          *handle
+
+Returns     : void
+
+Description : Main event handler for the text pane, redraw.
+
+*******************************************************************************/
+
+void textPane_eventHandler(wimp_eventstr *e, void *handle)
+{
+   TextPane *tp = (TextPane*)handle;
+
+   switch(e->e)
+   {
+      case wimp_EREDRAW:
+      {
+         textPane_redraw(tp);
+         
+         break;
+      }
+      case wimp_EOPEN:   // maximise or minimise window 
+      {
+         wimpt_noerr(wimp_open_wind(&e->data.o));
+
+         break;
+      }
+      case wimp_ECLOSE:   // close window 
+      {
+         wimpt_noerr(wimp_close_wind(e->data.o.w));
+         
+         break;
+      }
+      case wimp_EBUT:   // mouse button change
+      {                                      
+         break;
+      }
+      case wimp_EKEY:   // key pressed
+      {
+         break;
+      }
+   }
+}
+
+/*******************************************************************************
+
+Function    : textPane_create
+
+Parameters  : char *template - template name
+
+Returns     : TextPane * - pointer to the new TextPane structure.
+
+Description : Create a new TextPane, based on the specified template.
+
+*******************************************************************************/
+
+TextPane *textPane_create(char *template)                                                        
+{
+   // allocate memory for textPane structure
+                        
+   TextPane *tp = (TextPane*)malloc(sizeof(TextPane));
+   
+   tp->capacity = 32;
+   tp->line     = (char**)malloc(sizeof(char**)*tp->capacity);
+   tp->lines    = 0; 
+
+   wimp_wind *window = template_syshandle(template);
+
+   if (window == 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   if (wimpt_complain(wimp_create_wind(window, &(tp->handle))) != 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   win_register_event_handler(tp->handle, textPane_eventHandler,( void*)tp);
+
+   // set up font
+
+   wimpt_complain(font_find("Corpus.Medium", 240, 240, 0, 0, &(tp->font)));
+
+   wimpt_complain(font_setfont(tp->font));
+
+   wimp_paletteword bck, fgd;
+
+   fgd.word = (int)0x00000000U;
+   bck.word = (int)0xFFFFFF00U;
+
+   int max = 7;
+
+   colourtran_setfontcolours(&(tp->font), &bck, &fgd, &max);         
+
+   // all done
+
+   return tp;
+}
+
+/*******************************************************************************
+
+Function    : textPane_addLine 
+
+Parameters  : TextPane *tp   - pointer to TextPane structure
+              char     *line - pointer to null-terminated string
+
+Returns     : void
+
+Description : Add a copy of a null-terminated stting to the specified TextPane.
+              The string is duplicated on the heap as the memory used for the
+              argument is likely to be a buffer that may be subsequently
+              reused. 
+
+*******************************************************************************/
+
+void textPane_addLine(TextPane *tp, char *line)
+{                  
+   if (tp->lines == tp->capacity)
+   {
+      tp->capacity = 2*tp->capacity;
+      tp->line     = (char**)realloc(tp->line, sizeof(char**)*tp->capacity);      
+   }
+
+   tp->line[tp->lines++] = stringdup(line);
+
+   // update work area
+
+   wimp_redrawstr r;
+ 
+   r.w      = tp->handle;
+   r.box.x0 = 0;
+   r.box.y1 = 0;
+   r.box.x1 = (int)(132*22.5 + 16);
+   r.box.y0 = -tp->lines*36 - 36;
+   r.scy    = r.box.y0;
+
+   if (r.box.y0 > -620)
+   {
+      r.box.y0 = -620;
+   }
+
+   wimp_set_extent(&r); 
+      wimp_force_redraw(&r);       
+  
+   
+   wimp_wstate state;
+
+   if (wimpt_complain(wimp_get_wind_state(tp->handle, &state)) == 0)
+   {     
+      state.o.y = r.scy; 
+
+      wimpt_noerr(wimp_open_wind(&state.o));
+   }
+                                    
+}
+                                                                                
+/*******************************************************************************
+
+Function    : textpane_updateWorkAreaSize
+
+Parameters  : void
+
+Returns     : void
+
+Description :
+
+*******************************************************************************/
+
+static void textpane_updateWorkAreaSize(TextPane *tp)
+{
+   tp->redraw.w      = tp->handle;
+   tp->redraw.box.x0 = 0;
+   tp->redraw.box.y1 = 0;
+   tp->redraw.box.x1 = (int)(132*22.5 + 16);
+   tp->redraw.box.y0 = -tp->lines*36 - 36;
+
+   wimp_set_extent(&(tp->redraw)); 
+}                                                                             
+
+/*******************************************************************************
+
+Function    : textPane_destroy
+
+Parameters  : TextPane *tp - pointer to a TextPane structure
+
+Returns     : void
+
+Description : Close a TextPane and free all associated dynamically allocated
+              memory.
+
+*******************************************************************************/
+
+void textPane_destroy(TextPane *tp)
+{  
+   for (int i = 0; i < tp->lines; i++)
+   {
+      free(tp->line[i]);
+   }               
+     
+   free(tp->line);
+   free(tp);
+
+   font_lose(tp->font);
+}
+
+/*******************************************************************************
+
+Function    : textPane_forceRedraw
+
+Parameters  : TextPane *tp - pointer to TextPane object
+
+Returns     : void
+
+Description : Force a redraw of the whole work area
+
+*******************************************************************************/
+
+void textPane_forceRedraw(TextPane *tp)
+{
+   wimp_redrawstr r;
+
+   r.w      = tp->handle;
+   r.box.x0 = +0;
+   r.box.y0 = -INT_MAX;
+   r.box.x1 = +INT_MAX;
+   r.box.y1 = +0;   
+
+   wimp_force_redraw(&r);
+}
+
+/*******************************************************************************
+
+Function    : textPane_clear
+
+Parameters  : TextPane *tp - pointer to TextPane object
+
+Returns     : void
+
+Description : Clear a text area, and free memory allocated on the heap
+
+*******************************************************************************/
+
+void textPane_clear(TextPane *tp)
+{
+     wimp_redrawstr r;
+ 
+   r.w      = tp->handle;
+   r.box.x0 = 0;
+   r.box.y1 = 0;
+   r.box.x1 = (int)(132*22.5 + 16);
+   r.box.y0 = -INT_MAX;
+
+
+   for (int i = 0; i < tp->lines; i++)
+   {
+      free(tp->line[i]);
+   }
+
+   tp->lines = 0;  
+
+                          
+   wimp_force_redraw(&r);
+
+   r.box.y0 = -36;
+
+   wimp_set_extent(&r); 
+}
+
+/******************************************************************************/

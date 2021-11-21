@@ -1,0 +1,18 @@
+| > !logger.!Run
+|
+| Logger - Display and log debugging messages from wimp tasks
+|
+set Logger$Dir <Obey$Dir>
+set Logger$Path <Logger$Dir>
+
+IconSprites <Obey$Dir>.!Sprites
+
+|
+if "<System$Path>" = "" then Error 0 System resources cannot be found
+|
+RMEnsure SharedCLibrary 3.71 RMLoad System:Modules.Clib
+RMEnsure SharedCLibrary 3.71 Error, you need Clib 3.71 or later
+RMEnsure ColourTrans 0.52 RMLoad System:Modules.Colours
+RMEnsure ColourTrans 0.52 Error, you need ColourTrans 0.52 or later
+WimpSlot -min 96K -max 96K 
+run <Logger$Dir>.application

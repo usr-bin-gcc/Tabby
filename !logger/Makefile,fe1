@@ -1,0 +1,94 @@
+# Project:   application
+
+
+# Toolflags:
+CCflags = -c -c99 -depend !Depend -IRISC_OSLib: -throwback
+C++flags = -c -depend !Depend -IRISC_OSLib: -throwback
+Linkflags = -aif -c++ -o $@
+ObjAsmflags = -throwback -NoCache -depend !Depend
+CMHGflags = 
+LibFileflags = -c -o $@
+Squeezeflags = -o $@
+ModSqzflags = -o $@
+
+OBJS = @.o.logger @.o.main @.o.textpane RISC_OSLib:o.risc_oslib C:o.stubs
+
+# Final targets:
+@.application: $(OBJS)
+        Link $(Linkflags) $(OBJS)
+
+
+# User-editable dependencies:
+
+# Static dependencies:
+
+@.o.main:  @.c.main @.h.textpane @.h.logger 
+        cc $(ccflags) -o @.o.main @.c.main 
+
+@.o.logger:  @.h.logger @.c.logger 
+        cc $(ccflags) -o @.o.logger @.c.logger 
+
+@.o.textpane:  @.c.textpane @.h.textpane 
+        cc $(ccflags) -o @.o.textpane @.c.textpane 
+
+# Dynamic dependencies:
+o.DDEUtils:	c.DDEUtils
+o.DDEUtils:	h.DDEUtils
+o.DDEUtils:	RISC_OSLib:h.wimp
+o.DDEUtils:	RISC_OSLib:h.os
+o.DDEUtils:	C:h.kernel
+o.DDEUtils:	RISC_OSLib:h.sprite
+o.logger:	c.logger
+o.logger:	RISC_OSLib:h.wimp
+o.logger:	RISC_OSLib:h.os
+o.logger:	C:h.kernel
+o.logger:	RISC_OSLib:h.sprite
+o.logger:	RISC_OSLib:h.wimpt
+o.logger:	h.logger
+o.logger:	RISC_OSLib:h.wimp
+o.main:	c.main
+o.main:	RISC_OSLib:h.wimp
+o.main:	RISC_OSLib:h.os
+o.main:	C:h.kernel
+o.main:	RISC_OSLib:h.sprite
+o.main:	RISC_OSLib:h.wimpt
+o.main:	RISC_OSLib:h.resspr
+o.main:	RISC_OSLib:h.baricon
+o.main:	RISC_OSLib:h.res
+o.main:	RISC_OSLib:h.event
+o.main:	RISC_OSLib:h.menu
+o.main:	RISC_OSLib:h.menu
+o.main:	RISC_OSLib:h.dbox
+o.main:	RISC_OSLib:h.werr
+o.main:	RISC_OSLib:h.win
+o.main:	RISC_OSLib:h.template
+o.main:	RISC_OSLib:h.os
+o.main:	h.textpane
+o.main:	RISC_OSLib:h.wimp
+o.main:	RISC_OSLib:h.wimpt
+o.main:	RISC_OSLib:h.win
+o.main:	RISC_OSLib:h.template
+o.main:	RISC_OSLib:h.font
+o.main:	RISC_OSLib:h.drawmod
+o.main:	RISC_OSLib:h.colourtran
+o.main:	h.logger
+o.main:	RISC_OSLib:h.wimp
+o.textpane:	c.textpane
+o.textpane:	RISC_OSLib:h.bbc
+o.textpane:	RISC_OSLib:h.os
+o.textpane:	C:h.kernel
+o.textpane:	RISC_OSLib:h.wimp
+o.textpane:	RISC_OSLib:h.sprite
+o.textpane:	RISC_OSLib:h.wimpt
+o.textpane:	RISC_OSLib:h.win
+o.textpane:	RISC_OSLib:h.template
+o.textpane:	RISC_OSLib:h.font
+o.textpane:	RISC_OSLib:h.drawmod
+o.textpane:	RISC_OSLib:h.colourtran
+o.textpane:	h.textpane
+o.textpane:	RISC_OSLib:h.wimp
+o.textpane:	RISC_OSLib:h.wimpt
+o.textpane:	RISC_OSLib:h.win
+o.textpane:	RISC_OSLib:h.template
+o.textpane:	RISC_OSLib:h.font
+o.textpane:	RISC_OSLib:h.colourtran

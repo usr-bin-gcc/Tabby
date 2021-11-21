@@ -1,0 +1,18 @@
+| > !Tabby.!Run
+|
+| Tabby - make windows tabby
+|
+set Tabby$Dir <Obey$Dir>
+set Tabby$Path <Obey$Dir>.
+
+IconSprites <Obey$Dir>.!Sprites
+
+|
+if "<System$Path>" = "" then Error 0 System resources cannot be found
+|
+RMEnsure SharedCLibrary 3.71 RMLoad System:Modules.Clib
+RMEnsure SharedCLibrary 3.71 Error You need Clib 3.71 or later
+RMEnsure ColourTrans 0.52 RMLoad System:Modules.Colours
+RMEnsure ColourTrans 0.52 Error You need ColourTrans 0.52 or later
+WimpSlot -min 1024K -max 1024K 
+run <Tabby$Dir>.application
