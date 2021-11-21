@@ -2,14 +2,17 @@
 
 File        : c.main
 
-Date        : Sunday 7th November 2021
+Date        : Sunday 21st November 2021
 
 Author      : Gavin Cawley
 
-Description : Program to manage multiple (!SrcEdit) windows by groupin them all
-              under an external tab bar.
+Description : Program to manage multiple (!SrcEdit) windows by grouping them 
+              all under an external tab bar.
 
-History     : 07/11/2021 v0.01 - started work
+History     : 07/11/2021 v0.0.1 - started work
+              21/11/2021 v0.1.0 - first properly working prototype
+
+Acks        : Many thanks to Stuart Swales for his help and advice.
 
 *******************************************************************************/
 
@@ -80,6 +83,22 @@ Tabs;
 
 Tabs tabs;
 
+char block[32768];
+
+/*******************************************************************************
+
+Function    : strdup
+
+Parameters  : char* - pointer to string to be duplicated     
+
+Returns     : char* - pointer to duplicate string
+
+Description : Make a duplicate of a null-terminated string.  The duplicate is 
+              allocated from the heap, so the caller has responsibility for 
+              freeing it when no longer required.
+
+*******************************************************************************/
+
 #ifndef strdup
 
 char *strdup(const char *s)
@@ -97,8 +116,6 @@ char *strdup(const char *s)
 }
 
 #endif
-
-char block[32768];
 
 /*******************************************************************************
 
@@ -178,12 +195,11 @@ Parameters  : wimp_w - window handle
 Returns     : wimp_t - task handle 
 
 Description : Returns the task handle of the task that owns the specified
-              window.
+              window.  It is not clear what value is returned if an invalid
+              window handle is used.
 
 *******************************************************************************/
-   
-#define Wimp_SendMessage 0x400E7
-                                                         
+                                                            
 wimp_t identifyOwner(wimp_w window)
 {   
    os_regset regs;
@@ -193,7 +209,7 @@ wimp_t identifyOwner(wimp_w window)
    msg.size     = 20;   
    msg.your_ref = 0;  
 
-   regs.r[0] = 19; 
+   regs.r[0] = wimp_EACK; 
    regs.r[1] = (int)&msg;
    regs.r[2] = window;
 
@@ -201,96 +217,21 @@ wimp_t identifyOwner(wimp_w window)
 
    return (wimp_t)regs.r[2];   
 }
-
+             
 /*******************************************************************************
 
 Function    : extractLabel
 
-Parameters  : 
+Parameters  : char* - pointer to window title
 
-Returns     : 
+Returns     : char* - pointer to tab label allocated on the heap
 
-Description : 
-
-*******************************************************************************/
-                  
-void forceRedraw(wimp_w handle)
-{
-   wimp_redrawstr redrawstr;
-
-   wimp_winfo winfo;        
-
-   winfo.w = handle;
-
-   wimp_get_wind_info(&winfo);                                                   
-
-   redrawstr.w = handle;
-                                    
-   switch (3)
-   {
-      case 1:
-      {
-         // force redraw (absolute coordinates)
-                                 
-         redrawstr.w      = -1;
-         redrawstr.box.x0 = winfo.info.box.x0;
-         redrawstr.box.y0 = winfo.info.box.y0;
-         redrawstr.box.x1 = winfo.info.box.x1;
-         redrawstr.box.y1 = winfo.info.box.y1;
-         redrawstr.scx    = winfo.info.scx;
-         redrawstr.scy    = winfo.info.scx;
-                             
-         break;
-      }
-      case 2:
-      {                               
-         // force redraw (extent)
-
-         redrawstr.box.x0 = winfo.info.ex.x0;
-         redrawstr.box.y0 = winfo.info.ex.y0;
-         redrawstr.box.x1 = winfo.info.ex.x1;
-         redrawstr.box.y1 = winfo.info.ex.y1;
-         
-         break;
-      }        
-      case 3:
-      {    
-         // force redraw (extended syntax)
-
-         redrawstr.box.x0 = 0x4B534154;
-         redrawstr.box.y0 = 0;
-      
-         break;
-      }     
-      case 4:
-      {        
-         wimp_wstate wstate;
-
-         wimp_get_wind_state(handle, &wstate); 
-                                       
-         redrawstr.w      = handle;
-         redrawstr.box.x0 = wstate.o.x;
-         redrawstr.box.y0 = wstate.o.box.y0 - wstate.o.box.y1 + wstate.o.y;
-         redrawstr.box.x1 = wstate.o.box.x1 - wstate.o.box.x0 + wstate.o.x; 
-         redrawstr.box.y1 = -wstate.o.y;
-
-         break;
-      }
-   }
-                            
-
-   wimp_force_redraw(&redrawstr);        
-}
-
-/*******************************************************************************
-
-Function    : extractLabel
-
-Parameters  : 
-
-Returns     : 
-
-Description : 
+Description : Determine a suitable tab label from the title string of a 
+              window managed by !tabby.  If the title is a file path, then
+              the label is the name of the file, however if the path ends
+              c.<file> or h.<file>, the label will be <file>.h or <file>.c
+              respectively.  The label is allocated from the heap, so the
+              caller has responsibility for freeing it when no longer required.
 
 *******************************************************************************/
                       
@@ -318,6 +259,10 @@ char *extractLabel(char *path)
       {
          sprintf(buffer, "%s", token[n-1]);
       }
+   }                      
+   else
+   {
+      sprintf(buffer, "%s", path);
    }
 
    return strdup(buffer); 
@@ -327,11 +272,16 @@ char *extractLabel(char *path)
 
 Function    : selectTab 
 
-Parameters  : 
+Parameters  : int - index of tab to become the active tab
 
-Returns     : 
+Returns     : void
 
-Description : 
+Description : Select a new active tab, changing the colour an appearance of the
+              icon, and making the corresponding window visible.  If another
+              tab was previously active, the colour and appearance of the
+              icon is changed and the corresponding window is hidden.  In that
+              case, the dimensions and position of the new active window is
+              made the same as those of the old active window.
 
 *******************************************************************************/
 
@@ -345,7 +295,7 @@ void selectTab(int tab)
    {  
       if (active != -1)
       {                 
-         // change colour of active tab
+         // change colour and appearance of the old active tab
 
          wimp_get_icon_info(tabPane_handle, active, &info); 
 
@@ -355,27 +305,26 @@ void selectTab(int tab)
             (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
             (wimp_iconflags)(0xF0000000U | wimp_IFILLED));    
          
-         // hide active pane
+         // hide the old active window
 
          wimp_get_wind_state(active_handle, &active_state); 
                                  
          active_state.o.behind = -3;
 
-         // wimpt_noerr(wimp_open_wind(&active_state.o));
-
          sendOpenWindowRequest(active_handle, &active_state.o);
 
-         // store scroll positions
+         // store scroll positions for when it is next active
 
          tabs.tab[active].scx = active_state.o.x;
          tabs.tab[active].scy = active_state.o.y;
       }
-      else
-      {
-         //wimp_get_wind_state(tabs.tab[tab].handle, &active_state); 
-      }
 
-      // change colour of selected tab
+      // change the active tab
+
+      active        = tab;                                                                                         
+      active_handle = tabs.tab[active].handle;
+
+      // change colour and appearance of the new active tab
 
       wimp_get_icon_info(tabPane_handle, tab, &info); 
 
@@ -385,35 +334,39 @@ void selectTab(int tab)
          (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
          (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
 
-      // reopen selected tab              
-
-      active = tab;                                                
-                                         
-      active_handle = tabs.tab[active].handle;
-                    
-      // wimp_get_wind_state(active_handle, &active_state); 
+      // re-open the new active tab              
       
       active_state.o.w      = active_handle;   
       active_state.o.behind = gui_handle;
       active_state.o.x      = tabs.tab[active].scx;
       active_state.o.y      = tabs.tab[active].scy;
-
-      //wimpt_noerr(wimp_open_wind(&active_state.o));                                                 
         
       sendOpenWindowRequest(active_handle, &active_state.o);
-
-      forceRedraw(active_handle);
-
    }
 
    r.w      = tabPane_handle;
-   r.box.x0 = 0;
-   r.box.y0 = -4096;
-   r.box.x1 = 4096;
-   r.box.y1 = 0;
+   r.box.x0 = tabPane_state.o.box.x0;
+   r.box.y0 = tabPane_state.o.box.y0;
+   r.box.x1 = tabPane_state.o.box.x1;
+   r.box.y1 = tabPane_state.o.box.y1;
 
    wimp_force_redraw(&r);     
 }
+
+/*******************************************************************************
+
+Function    : tabPane_mouseClickHandler
+
+Parameters  : wimp_mousestr* - pointer to struct describing mouse event
+              wimp_bbits     - additional information about mouse event
+              Tabs*          - pointer to structure describing tabs
+
+Returns     : void
+
+Description : Respond to mouse button events over the tab pane, to determine
+              which tab is clicked on, and make that the active tab.
+
+*******************************************************************************/
 
 static void tabPane_mouseClickHandler(wimp_mousestr *ms, 
                                       wimp_bbits mbits,
@@ -433,13 +386,14 @@ static void tabPane_mouseClickHandler(wimp_mousestr *ms,
 
 /*******************************************************************************
 
-Function    : 
+Function    : setState
 
-Parameters  : 
+Parameters  : int - new state
 
-Returns     : 
+Returns     : void
 
-Description : 
+Description : Update the state of the !tabby GUI, including updating the
+              red/yellow/green LED.
 
 *******************************************************************************/
                                                                                 
@@ -492,13 +446,14 @@ void setState(int newState)
 
 /*******************************************************************************
 
-Function    : 
+Function    : gui_open
 
-Parameters  : 
+Parameters  : wimp_openstr* - pointer to struct describing window parameters
 
-Returns     : 
+Returns     : void
 
-Description : 
+Description : Open a !tabby window, and the associated tab pane, so that it is 
+              visible on-screen.
 
 *******************************************************************************/
 
@@ -520,6 +475,21 @@ void gui_open(wimp_openstr *openstr)
     wimpt_noerr(wimp_open_wind(openstr));
 }
 
+/*******************************************************************************
+
+Function    : gui_closeDown
+
+Parameters  : void
+
+Returns     : void
+
+Description : Called when a !tabby window is closed in order to restore all of
+              the hidden windows. 
+
+To do       : Free memory allocated to this !tabby window.
+
+*******************************************************************************/
+
 void gui_closeDown(void)
 {                                                     
    // bring back all of the windows
@@ -529,24 +499,23 @@ void gui_closeDown(void)
       wimp_get_wind_state(tabs.tab[i].handle, &active_state); 
       
       active_state.o.behind = -1;
-
-      //wimpt_noerr(wimp_open_wind(&active_state.o));   
-        
+      active_state.o.x      = tabs.tab[i].scx;
+      active_state.o.y      = tabs.tab[i].scy;
+      
       sendOpenWindowRequest(active_handle, &active_state.o);
-
-      forceRedraw(tabs.tab[i].handle);
    }
 }
    
 /*******************************************************************************
 
-Function    : 
+Function    : gui_eventHandler
 
-Parameters  : 
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace (unused)
 
-Returns     : 
+Returns     : void
 
-Description : 
+Description : Main event handler for the !tabby window.
 
 *******************************************************************************/
 
@@ -568,8 +537,6 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
             active_state.o.box.x0 = e->data.o.box.x0;
             active_state.o.box.y0 = active_state.o.box.y1 - height;
             active_state.o.behind = e->data.o.behind;
-
-            //wimpt_noerr(wimp_open_wind(&active_state.o));
 
             sendOpenWindowRequest(active_handle, &active_state.o);
          }
@@ -606,6 +573,19 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
    }
 }
 
+/*******************************************************************************
+
+Function    : tabPane_eventHandler 
+
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace
+
+Returns     : void
+
+Description : Main event handler for the tab pane of a !tabby window.
+
+*******************************************************************************/
+
 void tabPane_eventHandler(wimp_eventstr *e, void *handle)
 {
    switch(e->e)
@@ -632,6 +612,18 @@ void tabPane_eventHandler(wimp_eventstr *e, void *handle)
    }
 }
 
+/*******************************************************************************
+
+Function    : tabPane_create
+
+Parameters  : void
+
+Returns     : void
+
+Description : Create a new tab pane for a !tabby window.
+
+*******************************************************************************/
+
 void tabPane_create(void)
 {                        
    wimp_wind *window = template_syshandle("TabPane");
@@ -650,6 +642,18 @@ void tabPane_create(void)
 
    tabs.n = 0;
 }
+
+/*******************************************************************************
+
+Function    : gui_create
+
+Parameters  : void
+
+Returns     : void
+
+Description : Create a new !tabby tab bar windowl.
+
+*******************************************************************************/
            
 void gui_create(void)
 {                        
@@ -670,7 +674,17 @@ void gui_create(void)
    tabPane_create();
 }
 
+/*******************************************************************************
 
+Function    : info_about
+
+Parameters  : void
+
+Returns     : void
+
+Description : Display program information dialog box.
+
+*******************************************************************************/
 
 static void info_about(void)
 {
@@ -684,10 +698,36 @@ static void info_about(void)
    }
 }
 
+/*******************************************************************************
+
+Function    : ipremenuproc
+
+Parameters  : void* - pointer to workspace
+
+Returns     : void
+
+Description : Callback used to prepare the menu structure.  Currently just a
+              stub.
+
+*******************************************************************************/
+
 static menu ipremenuproc(void *handle)
 {
    return imenu;
 }
+
+/*******************************************************************************
+
+Function    : imenuproc
+
+Parameters  : void* - pointer to workspace
+              char* - hit
+
+Returns     : void
+
+Description : Event handler for clicks on the menu.
+
+*******************************************************************************/
 
 static void imenuproc(void *handle, char *hit)
 {
@@ -710,15 +750,36 @@ static void imenuproc(void *handle, char *hit)
    }
 }
 
+/*******************************************************************************
+
+Function    : icon_left_click
+
+Parameters  : wimp_i 
+
+Returns     : void
+
+Description : Callback called whenever the left mouse button is clicked on 
+              the icon on the icon bar.  This is currently unused, but will
+              later be implemented to allow multible !tabby tab bars.
+
+*******************************************************************************/
+
 static void icon_left_click(wimp_i icon)
 {
-   //wimp_wstate active_handle;
-
-   //wimpt_complain(wimp_get_wind_state(gui_handle, &active_handle));
-
-   //gui_open(&(active_handle.o));
 }
                                            
+/*******************************************************************************
+
+Function    : intersects
+
+Parameters  : wimp_box - pointer to first bounding box
+              wimp_box - pointer to second bounding box
+
+Returns     : int - 1 if boxes intersect and zero otherwise
+
+Description : Determine whether one window overlaps another on-screen.
+
+*******************************************************************************/
 
 int intersects(wimp_box *x, wimp_box *y)
 {                          
@@ -730,10 +791,18 @@ int intersects(wimp_box *x, wimp_box *y)
    return 1;
 }
 
-void hideTab(int tab)
-{
-   
-}
+/*******************************************************************************
+
+Function    : addTab
+
+Parameters  : wimp_w - handle of a window to be managed by !tabby
+
+Returns     : void
+
+Description : Create a new tab on the tab bar for the specified window and
+              select it as the active tab.
+
+*******************************************************************************/
                                  
 void addTab(wimp_w handle)
 {                              
@@ -745,7 +814,7 @@ void addTab(wimp_w handle)
    
    wimpt_complain(wimp_get_wind_info(info));
       
-   char *filename;
+   char *label;
 
    if (info->info.titleflags & wimp_INDIRECT)
    {                                                                  
@@ -757,7 +826,7 @@ void addTab(wimp_w handle)
                          buffer,
                          info->info.title.indirecttext.bufflen));
 
-      filename = extractLabel(buffer);
+      label = extractLabel(buffer);
    }  
    else
    {                              
@@ -767,7 +836,7 @@ void addTab(wimp_w handle)
 
       strncat(buffer, info->info.title.text, 12);
 
-      filename = strdup(buffer);
+      label = strdup(buffer);
    }
       
    // create tab icon
@@ -786,9 +855,9 @@ void addTab(wimp_w handle)
                        | 7U << 24U     // foreground colour
                        | 1U << 28U);   // background colour
 
-   icreatestr.i.data.indirecttext.buffer      = filename;
+   icreatestr.i.data.indirecttext.buffer      = label;
    icreatestr.i.data.indirecttext.validstring = strdup("R1"); 
-   icreatestr.i.data.indirecttext.bufflen     = strlen(filename);
+   icreatestr.i.data.indirecttext.bufflen     = strlen(label);
    icreatestr.i.box.x0 = tabs.n*240;
    icreatestr.i.box.y0 = -52 -16;
    icreatestr.i.box.x1 = icreatestr.i.box.x0 + 240;
@@ -796,7 +865,7 @@ void addTab(wimp_w handle)
          
    wimp_create_icon(&icreatestr, &tabs.tab[tabs.n].icon);
          
-   // update records
+   // record window handle and scroll bar positions
 
    tabs.tab[tabs.n].handle = handle;
    tabs.tab[tabs.n].scx    = info->info.scx;
@@ -816,6 +885,27 @@ void addTab(wimp_w handle)
 
    wimp_force_redraw(&redrawstr);
 }
+
+/*******************************************************************************
+
+Function    : monitor
+
+Parameters  : int   - current time
+              void* - pointer to workspace
+
+Returns     : void
+
+Description : Callback called by the alarm to repidly monitor the active 
+              window, and respond appropriately if it is moved or resized,
+              whenever the current state is STATE_LOCKED.  If the state is
+              STATE_SEARCHING, the application is waiting for a window to
+              be dragged over the tab bar, when this happens, the window is
+              identified, the state is changed to STATE_CAPTURING and there
+              is a delay of 1 second for the user to let go of the window.
+              If the state is STATE_CAPTURING, a new active tab is created
+              and the system moves back into STATE_LOCKED.
+
+*******************************************************************************/
 
 void monitor(int time, void *handle)
 {   
@@ -870,8 +960,6 @@ void monitor(int time, void *handle)
          active_state.o.w      = window;
          active_state.o.behind = -1;
 
-         //wimpt_noerr(wimp_open_wind(&active_state.o));
-
          sendOpenWindowRequest(active_handle, &active_state.o);      
       }
 
@@ -905,9 +993,21 @@ void monitor(int time, void *handle)
          gui_open(&gui_state.o);
       }
    }
+   else
+   {
+      // there is no active tab
+
+      delay = 10;
+   }
 
    alarm_set(alarm_timenow() + delay, monitor, NULL);
 }
+
+/*******************************************************************************
+*                                                                              * 
+*                              Main Function                                   * 
+*                                                                              * 
+*******************************************************************************/
 
 int main(void)
 {                                         
@@ -950,9 +1050,9 @@ int main(void)
 
    gui_open(&gui_state.o);
 
-   setState(STATE_LOCKED);
+   // start monitoring windows
 
-   // start animation
+   setState(STATE_LOCKED);
 
    alarm_init();
 
@@ -965,7 +1065,6 @@ int main(void)
       event_process();
    }
                     
-
    wimp_closedown();
 
    return EXIT_SUCCESS;
