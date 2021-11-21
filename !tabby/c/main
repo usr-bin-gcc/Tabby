@@ -99,7 +99,33 @@ char *strdup(const char *s)
 #endif
 
 char block[32768];
-         
+
+/*******************************************************************************
+
+Function    : sendOpenWindowMessage
+
+Parameters  : wimp_w        - window handle
+              wimp_openstr* - pointer to window parameter structure
+
+Returns     : void
+
+Description : Send an Open_Window_Request message to the specified window.
+
+*******************************************************************************/
+                        
+#define Wimp_SendMessage 0x400E7
+       
+void sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
+{
+   os_regset regs;
+
+   regs.r[0] = (int)wimp_EOPEN;
+   regs.r[1] = (int)openstr;
+   regs.r[2] = (int)handle;
+
+   wimpt_complain(os_swix(Wimp_SendMessage, &regs));
+}
+
 /*******************************************************************************
 
 Function    : findTask
@@ -335,7 +361,9 @@ void selectTab(int tab)
                                  
          active_state.o.behind = -3;
 
-         wimpt_noerr(wimp_open_wind(&active_state.o));
+         // wimpt_noerr(wimp_open_wind(&active_state.o));
+
+         sendOpenWindowRequest(active_handle, &active_state.o);
 
          // store scroll positions
 
@@ -370,7 +398,9 @@ void selectTab(int tab)
       active_state.o.x      = tabs.tab[active].scx;
       active_state.o.y      = tabs.tab[active].scy;
 
-      wimpt_noerr(wimp_open_wind(&active_state.o));                                                 
+      //wimpt_noerr(wimp_open_wind(&active_state.o));                                                 
+        
+      sendOpenWindowRequest(active_handle, &active_state.o);
 
       forceRedraw(active_handle);
 
@@ -500,7 +530,9 @@ void gui_closeDown(void)
       
       active_state.o.behind = -1;
 
-      wimpt_noerr(wimp_open_wind(&active_state.o));   
+      //wimpt_noerr(wimp_open_wind(&active_state.o));   
+        
+      sendOpenWindowRequest(active_handle, &active_state.o);
 
       forceRedraw(tabs.tab[i].handle);
    }
@@ -537,7 +569,9 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
             active_state.o.box.y0 = active_state.o.box.y1 - height;
             active_state.o.behind = e->data.o.behind;
 
-            wimpt_noerr(wimp_open_wind(&active_state.o));
+            //wimpt_noerr(wimp_open_wind(&active_state.o));
+
+            sendOpenWindowRequest(active_handle, &active_state.o);
          }
                                       
          gui_open(&(e->data.o));
@@ -836,7 +870,9 @@ void monitor(int time, void *handle)
          active_state.o.w      = window;
          active_state.o.behind = -1;
 
-         wimpt_noerr(wimp_open_wind(&active_state.o));      
+         //wimpt_noerr(wimp_open_wind(&active_state.o));
+
+         sendOpenWindowRequest(active_handle, &active_state.o);      
       }
 
       addTab(window);      
