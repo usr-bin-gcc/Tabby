@@ -18,6 +18,9 @@ OBJS = @.o.main RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
         Link $(Linkflags) $(OBJS)
 
 
+.INIT:
+        @CDir o
+
 # User-editable dependencies:
 
 # Static dependencies:
