@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 21st November 2021
+Date        : Sunday 27th November 2021
 
 Author      : Gavin Cawley
 
@@ -11,6 +11,14 @@ Description : Program to manage multiple (!SrcEdit) windows by grouping them
 
 History     : 07/11/2021 v0.0.1 - started work
               21/11/2021 v0.1.0 - first properly working prototype
+              27/11/2021 v0.2.0 - windows can now be independently released
+                                  from the tab bar, but needs tidying up
+
+To do       : (a) Scrolling tab pane to allow a large number of tabs.
+
+              (b) Allow tabs to be rearranged by dragging.
+
+              (c) Support for multiple independent tab bars.
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -18,11 +26,9 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <math.h>
 #include <string.h>
                  
 #include "alarm.h"
-#include "bbc.h"
 #include "wimp.h"
 #include "wimpt.h"
 #include "resspr.h"
@@ -31,11 +37,8 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
 #include "event.h"
 #include "menu.h"
 #include "dbox.h"
-#include "werr.h"
 #include "win.h"
 #include "template.h"
-#include "font.h"
-#include "colourtran.h"
 
 #include "logger.h"
    
@@ -61,17 +64,15 @@ wimp_wstate gui_state, active_state, tabPane_state;
                          
 int state = STATE_SEARCHING;
 
-typedef struct _Tab
+typedef struct TabStr
 {  
    wimp_w handle;
-
-   wimp_i icon;
 
    int scx, scy;   // scroll bar positions
 }
 Tab;
           
-typedef struct _Tabs
+typedef struct TabsStr
 {
    Tab tab[MAX_TABS];
 
@@ -233,6 +234,9 @@ Description : Determine a suitable tab label from the title string of a
               respectively.  The label is allocated from the heap, so the
               caller has responsibility for freeing it when no longer required.
 
+              Note that labels are always returned as 16 byte blocks so that
+              tab labels can always be copied safely.
+
 *******************************************************************************/
                       
 char *extractLabel(char *path)
@@ -264,10 +268,78 @@ char *extractLabel(char *path)
    {
       sprintf(buffer, "%s", path);
    }
+                    
+   // return label in a fixed size (16 byte) buffer
+       
+   char *label = (char*)malloc(16);
+   
+   memcpy(label, buffer, 15);
+
+   label[15] = '\0';
 
    return strdup(buffer); 
 }
-                                                                                
+
+/*******************************************************************************
+
+Function    : tabBar_forceRedraw
+
+Parameters  : void
+
+Returns     : void
+
+Description : Force a redraw of the entire tab bar.
+                  
+To do       : A bit of a hack at the moment, needs to be properly 
+              re-implemented.
+
+*******************************************************************************/
+
+void tabBar_forceRedraw(void)
+{
+   wimp_redrawstr redrawstr;
+
+   redrawstr.w      = tabPane_handle;
+   redrawstr.box.x0 = -4096;
+   redrawstr.box.y0 = -4096;
+   redrawstr.box.x1 = +4096;
+   redrawstr.box.y1 = +4096;
+   
+   wimp_force_redraw(&redrawstr);                  
+}
+
+/*******************************************************************************
+
+Function    : tabBar_taskBar_releaseWindow
+
+Parameters  : int - tab number
+
+Returns     : void
+
+Description : Release a window associated with a tab.  The window is re-opened
+              at the top of the window stack, displaced downwards and to the
+              right, to make it clear that it is no longer managed by the tab
+              bar.
+
+*******************************************************************************/
+                                                            
+void tabBar_releaseWindow(int tab)
+{
+   wimp_wstate wstate;
+
+   wimp_get_wind_state(tabs.tab[tab].handle, &wstate); 
+      
+   wstate.o.behind = -1;
+   wstate.o.x      = tabs.tab[tab].scx;
+   wstate.o.y      = tabs.tab[tab].scy;
+   wstate.o.box.x0 += 64; 
+   wstate.o.box.y0 -= 64;
+   wstate.o.box.x1 += 64;
+   wstate.o.box.y1 -= 64;
+      
+   sendOpenWindowRequest(tabs.tab[tab].handle, &wstate.o); 
+}
+                                                                     
 /*******************************************************************************
 
 Function    : selectTab 
@@ -297,11 +369,11 @@ void selectTab(int tab)
       {                 
          // change colour and appearance of the old active tab
 
-         wimp_get_icon_info(tabPane_handle, active, &info); 
+         wimp_get_icon_info(tabPane_handle, active*2, &info); 
 
          info.data.indirecttext.validstring[1] = '1';
 
-         wimp_set_icon_state(tabPane_handle, active, 
+         wimp_set_icon_state(tabPane_handle, 2*active, 
             (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
             (wimp_iconflags)(0xF0000000U | wimp_IFILLED));    
          
@@ -326,11 +398,11 @@ void selectTab(int tab)
 
       // change colour and appearance of the new active tab
 
-      wimp_get_icon_info(tabPane_handle, tab, &info); 
+      wimp_get_icon_info(tabPane_handle, 2*tab, &info); 
 
       info.data.indirecttext.validstring[1] = '2';
 
-      wimp_set_icon_state(tabPane_handle, tab, 
+      wimp_set_icon_state(tabPane_handle, 2*tab, 
          (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
          (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
 
@@ -355,6 +427,84 @@ void selectTab(int tab)
 
 /*******************************************************************************
 
+Function    : deleteTab 
+
+Parameters  : int - index of tab to be deleted
+
+Returns     : void
+
+Description : Delete a tab.  It isn't clear at the moment whether the correct
+              behaviour should be to close the window or just detach it from 
+              the tab bar.  For the moment, I'll go with detatching the window
+              as it is easier and more conducive to debugging.
+
+              Rather than re-form the tab bar, just relabel the existing icons
+              and delete the last one, which hopefully is the most efficient
+              approach.
+
+*******************************************************************************/
+                       
+void deleteTab(int tab)
+{  
+   // deselect the tab if currently active
+                                         
+   LOG("deleteTab", "tab = %d : active = %d\n", tab, active);
+
+   if (tabs.n == 1)
+   {
+      active        = -1;   
+      active_handle = 0;        
+
+      LOG("deleteTab", "FOO! tab = %d : active = %d\n", tab, active);
+   }
+   else if (tab == active)
+   {                 
+      selectTab(tab == 0 ? 1 : (tab-1));
+
+      LOG("deleteTab", "BAR! tab = %d : active = %d\n", tab, active);              
+   }          
+   else if (tab < active)
+   {                     
+      active--;
+   }       
+
+   // release window
+
+   tabBar_releaseWindow(tab);
+
+   // update the tab bar     
+       
+   for (int i = tab + 1; i < tabs.n; i++)
+   {        
+      tabs.tab[i-1].handle = tabs.tab[i].handle;
+      tabs.tab[i-1].scx    = tabs.tab[i].scx;
+      tabs.tab[i-1].scy    = tabs.tab[i].scy;
+
+      wimp_icon icon1, icon2;
+
+      wimp_get_icon_info(tabPane_handle, (i-1)*2, &icon1); 
+      wimp_get_icon_info(tabPane_handle, i*2,     &icon2); 
+
+      strncpy(icon1.data.indirecttext.buffer, 
+              icon2.data.indirecttext.buffer, 15);
+
+      strncpy(icon1.data.indirecttext.validstring, 
+              icon2.data.indirecttext.validstring, 2);
+
+      wimp_set_icon_state(tabPane_handle, 2*(i-1), icon2.flags, 
+         (wimp_iconflags)0xFFFFFFFF);
+   }
+
+   tabs.n--;               
+
+   wimp_delete_icon(tabPane_handle, 2*tabs.n);
+   wimp_delete_icon(tabPane_handle, 2*tabs.n+1);
+
+   tabBar_forceRedraw();
+}           
+
+/*******************************************************************************
+
 Function    : tabPane_mouseClickHandler
 
 Parameters  : wimp_mousestr* - pointer to struct describing mouse event
@@ -374,13 +524,24 @@ static void tabPane_mouseClickHandler(wimp_mousestr *ms,
 {     
    wimp_icon info;
 
-   wimp_get_icon_info(tabPane_handle, ms->i, &info);
-
-   char *valid = info.data.indirecttext.validstring;
-            
-   if (valid[1] == '1')
+   if (ms->i%2 == 0)
    {
-      selectTab(ms->i);
+      // tab clicked
+
+      wimp_get_icon_info(tabPane_handle, ms->i, &info);
+
+      char *valid = info.data.indirecttext.validstring;
+            
+      if (valid[1] == '1')
+      {
+         selectTab(ms->i/2);
+      } 
+   }
+   else
+   {
+      // tab close button clicked      
+
+      deleteTab(ms->i/2);
    }
 }          
 
@@ -461,7 +622,7 @@ void gui_open(wimp_openstr *openstr)
 {   
    // open tab pane
           
-   openstr->box.x0 = openstr->box.x0 + 128;                    
+   openstr->box.x0 = openstr->box.x0 + 80;                    
    openstr->w      = tabPane_handle;
          
    wimpt_noerr(wimp_open_wind(openstr));
@@ -469,7 +630,7 @@ void gui_open(wimp_openstr *openstr)
     // open main window
 
     openstr->w      = gui_handle;
-    openstr->box.x0 = openstr->box.x0 - 128;                    
+    openstr->box.x0 = openstr->box.x0 - 80;                    
     openstr->behind = tabPane_handle;
             
     wimpt_noerr(wimp_open_wind(openstr));
@@ -842,12 +1003,13 @@ void addTab(wimp_w handle)
    // create tab icon
 
    wimp_icreate icreatestr;
+
+   wimp_i icon;
                                                       
    icreatestr.w = tabPane_handle;                   
                       
    icreatestr.i.flags  = (wimp_iconflags)
                        ( wimp_ITEXT
-                       | wimp_IHCENTRE
                        | wimp_IVCENTRE
                        | wimp_INDIRECT
                        | wimp_IBORDER
@@ -862,9 +1024,25 @@ void addTab(wimp_w handle)
    icreatestr.i.box.y0 = -52 -16;
    icreatestr.i.box.x1 = icreatestr.i.box.x0 + 240;
    icreatestr.i.box.y1 = -16;
-         
-   wimp_create_icon(&icreatestr, &tabs.tab[tabs.n].icon);
-         
+       
+   wimp_create_icon(&icreatestr, &icon);
+
+   // create tab close icon
+
+   icreatestr.i.flags  = (wimp_iconflags)
+                       ( wimp_ISPRITE
+                       | wimp_IHCENTRE
+                       | wimp_IVCENTRE
+                       | wimp_BCLICKAUTO << 12);
+
+   strncpy(icreatestr.i.data.sprite_name, "close", 11); 
+   icreatestr.i.box.x0 = icreatestr.i.box.x0 + 200;
+   icreatestr.i.box.y0 = -52 + 16 -16;
+   icreatestr.i.box.x1 = icreatestr.i.box.x0 + 20;
+   icreatestr.i.box.y1 = -16 -16;
+
+   wimp_create_icon(&icreatestr, &icon);
+        
    // record window handle and scroll bar positions
 
    tabs.tab[tabs.n].handle = handle;
