@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 27th November 2021
+Date        : Sunday 28th November 2021
 
 Author      : Gavin Cawley
 
@@ -17,12 +17,30 @@ History     : 07/11/2021 v0.0.1 - started work
                                   and the release of non-active windows made 
                                   more consistent in behaviour and minor 
                                   refactoring
+              28/11/2021 v0.3.0 - logging can now be disabled by a preprocessor
+                                  directive (DEBUG).  Now suppports scrolling
+                                  of the tab pane.
 
-To do       : (a) Scrolling tab pane to allow a large number of tabs.
+To do       : (a) Scroll buttons should only be visible when it is possible to
+                  scroll further in that direction.  Make the most of the 
+                  available width to display as many tabs as possible.
 
               (b) Allow tabs to be rearranged by dragging.
 
               (c) Support for multiple independent tab bars.
+
+              (d) Refactor tab pane so that tabs can be the minimum width for
+                  the label, and move tabs, rather than reuse them.
+
+              (e) Need to refactor at some point to eliminate memory leaks,
+                  these are not too serious at the moment, so it can wail until
+                  the design has stabilised/congealed sufficiently.
+
+              (f) Have the tab bar window title copy that of the active window,
+                  and ideally have it match the background colour (perhaps
+                  monitor every 100ms or so?  Could then hide the title bar of
+                  the window, which would make some aspects of management a bit
+                  easier.
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -44,12 +62,19 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
 #include "win.h"
 #include "template.h"
 
+#define DEBUG 0
+
+#if DEBUG
 #include "logger.h"
+#else
+#define LOG(...)
+#endif
    
 #define APP_NAME "Tabby"
 #define MENU_ITEMS ">Info,Quit"
                  
 #define MAX_TABS (256)
+#define TAB_WIDTH (275)
                     
 #define IMENU_INFO 1
 #define IMENU_QUIT 2
@@ -233,6 +258,36 @@ wimp_t identifyOwner(wimp_w window)
 
 /*******************************************************************************
 
+Function    : resizeIcon 
+
+Parameters  : wimp_w    - window handle
+              wimp_i    - icon handle
+              wimp_box* - pointer to new bounding box
+
+Returns     : void
+
+Description : Resize (or move) and existing icon
+
+*******************************************************************************/
+
+#define Wimp_ResizeIcon 0x400FC
+                                                            
+void resizeIcon(wimp_w window, wimp_i icon, wimp_box *bbox)
+{   
+   os_regset regs; 
+
+   regs.r[0] = window; 
+   regs.r[1] = icon;
+   regs.r[2] = bbox->x0;
+   regs.r[3] = bbox->y0;
+   regs.r[4] = bbox->x1;
+   regs.r[5] = bbox->y1;
+
+   wimpt_complain(os_swix(Wimp_ResizeIcon, &regs)); 
+}
+
+/*******************************************************************************
+
 Function    : intersects
 
 Parameters  : wimp_box - pointer to bounding box of first window
@@ -279,10 +334,24 @@ int different(wimp_box *x, wimp_box *y)
 
 /*******************************************************************************
 *                                                                              * 
-*                                     Tab Pane                                 * 
+*                                    Tab Pane                                  * 
 *                                                                              * 
 *******************************************************************************/
+                         
+void tabPane_scrollLeft(void)
+{
+   tabPane_state.o.x -= TAB_WIDTH;
 
+   wimpt_noerr(wimp_open_wind(&tabPane_state.o));
+
+}
+
+void tabPane_scrollRight(void)
+{                         
+   tabPane_state.o.x += TAB_WIDTH;
+
+   wimpt_noerr(wimp_open_wind(&tabPane_state.o));
+}
              
 /*******************************************************************************
 
@@ -743,9 +812,9 @@ void tabPane_addTab(wimp_w handle)
    icreatestr.i.data.indirecttext.buffer      = label;
    icreatestr.i.data.indirecttext.validstring = strdup("R1"); 
    icreatestr.i.data.indirecttext.bufflen     = strlen(label);
-   icreatestr.i.box.x0 = tabs.n*240;
+   icreatestr.i.box.x0 = tabs.n*TAB_WIDTH;
    icreatestr.i.box.y0 = -52 -16;
-   icreatestr.i.box.x1 = icreatestr.i.box.x0 + 240;
+   icreatestr.i.box.x1 = icreatestr.i.box.x0 + TAB_WIDTH;
    icreatestr.i.box.y1 = -16;
        
    wimp_create_icon(&icreatestr, &icon);
@@ -759,9 +828,9 @@ void tabPane_addTab(wimp_w handle)
                        | wimp_BCLICKAUTO << 12);
 
    strncpy(icreatestr.i.data.sprite_name, "close", 11); 
-   icreatestr.i.box.x0 = icreatestr.i.box.x0 + 200;
+   icreatestr.i.box.x0 = icreatestr.i.box.x0 + TAB_WIDTH - 30;
    icreatestr.i.box.y0 = -52 + 16 -16;
-   icreatestr.i.box.x1 = icreatestr.i.box.x0 + 20;
+   icreatestr.i.box.x1 = icreatestr.i.box.x0 + 13;
    icreatestr.i.box.y1 = -16 -16;
 
    wimp_create_icon(&icreatestr, &icon);
@@ -870,20 +939,25 @@ Description : Open a !tabby window, and the associated tab pane, so that it is
 
 void gui_open(wimp_openstr *openstr)
 {   
-   // open tab pane
-          
-   openstr->box.x0 = openstr->box.x0 + 80;                    
-   openstr->w      = tabPane_handle;
+   // open tab pane                       
+
+   tabPane_state.o.box.x0 = openstr->box.x0 + 124;   
+   tabPane_state.o.box.y0 = openstr->box.y0;
+   tabPane_state.o.box.x1 = openstr->box.x1 - 60;
+   tabPane_state.o.box.y1 = openstr->box.y1; 
+   tabPane_state.o.behind = openstr->behind;                 
+   tabPane_state.o.w      = tabPane_handle;
          
-   wimpt_noerr(wimp_open_wind(openstr));
+   wimpt_noerr(wimp_open_wind(&tabPane_state.o));
 
-    // open main window
+   // open main window
 
-    openstr->w      = gui_handle;
-    openstr->box.x0 = openstr->box.x0 - 80;                    
-    openstr->behind = tabPane_handle;
+   openstr->w      = gui_handle;
+   openstr->box.x0 = openstr->box.x0;                    
+   openstr->behind = tabPane_handle;
+   openstr->box.x1 = openstr->box.x1; 
             
-    wimpt_noerr(wimp_open_wind(openstr));
+   wimpt_noerr(wimp_open_wind(openstr));
 }
 
 /*******************************************************************************
@@ -966,16 +1040,33 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
          break;
       }
       case wimp_EBUT:   // mouse button change
-      {                                      
-         if (e->data.but.m.i == 0)
-         {                  
-            if (state == STATE_LOCKED)
-            {
-               gui_setState(STATE_SEARCHING);
+      {     
+         switch (e->data.but.m.i)
+         {                                 
+            case 0: // LED
+            {                
+               if (state == STATE_LOCKED)
+               {
+                  gui_setState(STATE_SEARCHING);
+               }
+               else
+               {        
+                  gui_setState(STATE_LOCKED);
+               }
+
+               break;
             }
-            else
-            {        
-               gui_setState(STATE_LOCKED);
+            case 1: // left scroll button
+            {                
+               tabPane_scrollLeft();
+
+               break;
+            }
+            case 2: // LED
+            {                
+               tabPane_scrollRight();
+
+               break;
             }
          }
 
@@ -1108,6 +1199,35 @@ void gui_monitor(int time, void *handle)
 
       if (different(&active_state.o.box, &wstate.o.box))
       {
+         // has it been resize? If so, move right icon
+                        
+         int oldWidth = active_state.o.box.x1 - active_state.o.box.x0;
+         int newWidth = gui_state.o.box.x1 - gui_state.o.box.x0;
+
+         if (newWidth != oldWidth)
+         {
+            wimp_box bbox;
+
+            bbox.x0 = newWidth - 40 - 14;
+            bbox.y0 = -60;
+            bbox.x1 = newWidth - 14;
+            bbox.y1 = -20;
+
+            resizeIcon(gui_handle, 2, &bbox);
+
+            wimp_redrawstr redrawstr;
+
+            redrawstr.w      = gui_handle;
+            redrawstr.box.x0 = -4096;
+            redrawstr.box.y0 = -4096;
+            redrawstr.box.x1 = +4096;
+            redrawstr.box.y1 = +4096;
+   
+            wimp_force_redraw(&redrawstr);    
+         }
+
+         // reopen window
+
          memcpy(&active_state, &wstate, sizeof(wimp_wstate));
 
          gui_state.o.box.x0 = active_state.o.box.x0;
