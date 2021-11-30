@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 28th November 2021
+Date        : Tuesday 30th November 2021
 
 Author      : Gavin Cawley
 
@@ -20,6 +20,7 @@ History     : 07/11/2021 v0.0.1 - started work
               28/11/2021 v0.3.0 - logging can now be disabled by a preprocessor
                                   directive (DEBUG).  Now suppports scrolling
                                   of the tab pane.
+              30/11/2021 v0.4.0 - window title bar now hidden beneath tabby window.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -45,6 +46,16 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
               (g) Add a configuration option so that the user can decide whether
                   the windows are closed or just released when the tabby bar is
                   closed or the tab is closed.
+                     
+              (h) When resizing the window the title bar intermittenly 
+                  overwrites the !tabby bar unless dragging with the right
+                  button.
+
+              (i) To make dragging smoother, when a resize event is detected
+                  by the monitor function, a null even processor could be 
+                  enabled to handle the resizing at the fastest possible 
+                  rate.  The monitor function should probably be disabled 
+                  while that happens?       
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -1248,8 +1259,7 @@ void gui_monitor(int time, void *handle)
 
          active_state.o.behind = gui_handle;
 
-            wimpt_noerr(wimp_open_wind(&active_state.o));
-
+         wimpt_noerr(wimp_open_wind(&active_state.o));
       }
    }
    else
