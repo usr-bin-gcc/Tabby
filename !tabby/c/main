@@ -42,6 +42,10 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
                   the window, which would make some aspects of management a bit
                   easier.
 
+              (g) Add a configuration option so that the user can decide whether
+                  the windows are closed or just released when the tabby bar is
+                  closed or the tab is closed.
+
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
 *******************************************************************************/
@@ -1012,21 +1016,23 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
       {
          if (active_handle != 0)
          {     
+            gui_open(&(e->data.o));
+
             wimp_get_wind_state(active_handle, &active_state); 
 
             int height = active_state.o.box.y1 - active_state.o.box.y0;
             
             active_state.o.w      = active_handle;
             active_state.o.box.x1 = e->data.o.box.x1 - 40;
-            active_state.o.box.y1 = e->data.o.box.y0 - 40 - 2;
+            active_state.o.box.y1 = e->data.o.box.y0 - 2;
             active_state.o.box.x0 = e->data.o.box.x0;
             active_state.o.box.y0 = active_state.o.box.y1 - height;
-            active_state.o.behind = e->data.o.behind;
+            active_state.o.behind = gui_handle;
 
             sendOpenWindowRequest(active_handle, &active_state.o);
          }
                                       
-         gui_open(&(e->data.o));
+
       
          break;
       }
@@ -1174,7 +1180,7 @@ void gui_monitor(int time, void *handle)
          int height = active_state.o.box.y1 - active_state.o.box.y0;
 
          active_state.o.box.x1 = gui_state.o.box.x1 - 40;
-         active_state.o.box.y1 = gui_state.o.box.y0 - 40 - 2;
+         active_state.o.box.y1 = gui_state.o.box.y0 - 2;
          active_state.o.box.x0 = gui_state.o.box.x0;
          active_state.o.box.y0 = gui_state.o.box.y1 - height;
          active_state.o.w      = window;
@@ -1231,12 +1237,19 @@ void gui_monitor(int time, void *handle)
          memcpy(&active_state, &wstate, sizeof(wimp_wstate));
 
          gui_state.o.box.x0 = active_state.o.box.x0;
-         gui_state.o.box.y0 = active_state.o.box.y1 + 40 + 2;
+         gui_state.o.box.y0 = active_state.o.box.y1 + 2;
          gui_state.o.box.x1 = active_state.o.box.x1 + 40;
          gui_state.o.box.y1 = gui_state.o.box.y0 + 64;
          gui_state.o.behind = active_handle;
 
          gui_open(&gui_state.o);
+
+         // re-open active tab underneath the GUI
+
+         active_state.o.behind = gui_handle;
+
+            wimpt_noerr(wimp_open_wind(&active_state.o));
+
       }
    }
    else
