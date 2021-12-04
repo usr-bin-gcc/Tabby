@@ -2,25 +2,30 @@
 
 File        : c.main
 
-Date        : Tuesday 30th November 2021
+Date        : Saturday 4th December 2021
 
 Author      : Gavin Cawley
 
 Description : Program to manage multiple (!SrcEdit) windows by grouping them 
               all under an external tab bar.
 
-History     : 07/11/2021 v0.0.1 - started work
-              21/11/2021 v0.1.0 - first properly working prototype
-              27/11/2021 v0.2.0 - windows can now be independently released
-                                  from the tab bar, but needs tidying up
-              27/11/2021 v0.2.1 - fixed a bug when a non-active tab is released
+History     : 07/11/2021 v0.0.1 - Started work.
+              21/11/2021 v0.1.0 - First properly working prototype.
+              27/11/2021 v0.2.0 - Windows can now be independently released
+                                  from the tab bar, but needs tidying up.
+              27/11/2021 v0.2.1 - Fixed a bug when a non-active tab is released
                                   and the release of non-active windows made 
                                   more consistent in behaviour and minor 
-                                  refactoring
-              28/11/2021 v0.3.0 - logging can now be disabled by a preprocessor
+                                  refactoring.
+              28/11/2021 v0.3.0 - Logging can now be disabled by a preprocessor
                                   directive (DEBUG).  Now suppports scrolling
                                   of the tab pane.
-              30/11/2021 v0.4.0 - window title bar now hidden beneath tabby window.
+              30/11/2021 v0.4.0 - Window title bar now hidden beneath tabby 
+                                  window.
+              04/12/2021 v0.5.0 - A small window now intercepts drags on the
+                                  adjust size icon, so that !tabby now has
+                                  complete control over the dimensions of the
+                                  active window
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -46,16 +51,6 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
               (g) Add a configuration option so that the user can decide whether
                   the windows are closed or just released when the tabby bar is
                   closed or the tab is closed.
-                     
-              (h) When resizing the window the title bar intermittenly 
-                  overwrites the !tabby bar unless dragging with the right
-                  button.
-
-              (i) To make dragging smoother, when a resize event is detected
-                  by the monitor function, a null even processor could be 
-                  enabled to handle the resizing at the fastest possible 
-                  rate.  The monitor function should probably be disabled 
-                  while that happens?       
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -77,7 +72,7 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
 #include "win.h"
 #include "template.h"
 
-#define DEBUG 0
+#define DEBUG 1
 
 #if DEBUG
 #include "logger.h"
@@ -98,9 +93,14 @@ menu imenu;
 
 int active = -1;   // the currently active tab (-1 if no tabs)               
 
-wimp_w gui_handle = 0, tabPane_handle = 0, active_handle = 0;
+wimp_w gui_handle     = 0;
+wimp_w tabPane_handle = 0;
+wimp_w active_handle  = 0;
+wimp_w vscroll_handle = 0;
+wimp_w hscroll_handle = 0;
+wimp_w adjust_handle  = 0;
 
-wimp_wstate gui_state, active_state, tabPane_state;
+wimp_wstate gui_state, active_state, tabPane_state, adjust_state;
                  
 #define STATE_SEARCHING 0
 #define STATE_CAPTURING 1
@@ -137,6 +137,42 @@ char block[32768];
 *                                                                              * 
 *******************************************************************************/
 
+
+/*******************************************************************************
+
+Function    : min
+
+Parameters  : int - first integer
+              int - second integer     
+
+Returns     : int - smaller of the two integer arguments
+
+Description : Return the value of the smaller of the two integer arguments.
+
+*******************************************************************************/
+
+int min(int x, int y)
+{
+   return x < y ? x : y;
+}
+
+/*******************************************************************************
+
+Function    : max
+
+Parameters  : int - first integer
+              int - second integer     
+
+Returns     : int - larger of the two integer arguments
+
+Description : Return the value of the larger of the two integer arguments.
+
+*******************************************************************************/
+
+int max(int x, int y)
+{
+   return x > y ? x : y;
+}
 
 /*******************************************************************************
 
@@ -308,20 +344,20 @@ Function    : intersects
 Parameters  : wimp_box - pointer to bounding box of first window
               wimp_box - pointer to bounding box of second window
 
-Returns     : int - 1 if boxes intersect and zero otherwise
+Returns     : BOOL - TRUE if boxes intersect and FALSE otherwise
 
 Description : Determine whether one window overlaps another on-screen.
 
 *******************************************************************************/
 
-int intersects(wimp_box *x, wimp_box *y)
+BOOL intersects(wimp_box *x, wimp_box *y)
 {                          
-   if (x->x0 > y->x1) return 0;
-   if (x->x1 < y->x0) return 0;
-   if (x->y0 > y->y1) return 0;
-   if (x->y1 < y->y0) return 0; 
+   if (x->x0 > y->x1) return FALSE;
+   if (x->x1 < y->x0) return FALSE;
+   if (x->y0 > y->y1) return FALSE;
+   if (x->y1 < y->y0) return FALSE; 
    
-   return 1;
+   return TRUE;
 }
                                                                                 
 /*******************************************************************************
@@ -331,14 +367,14 @@ Function    : different
 Parameters  : wimp_box - pointer to box 
               wimp_box - pointer to box 
 
-Returns     : int - one if boxes are different and zero otherwise
+Returns     : BOOL - TRUE if boxes are different and FLASE otherwise
 
 Description : Determine whether two wimp_box structures differ.  Typically used
               to determine whether a window has been moved or resized.
 
 *******************************************************************************/
                                                     
-int different(wimp_box *x, wimp_box *y)
+BOOL different(wimp_box *x, wimp_box *y)
 {
    return ((x->x0 != y->x0) ||
            (x->y0 != y->y0) ||
@@ -555,10 +591,16 @@ void tabPane_selectTab(int tab)
          (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
          (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
 
+      // re-open adjust window
+       
+      adjust_state.o.behind = gui_handle;
+
+      sendOpenWindowRequest(adjust_handle, &adjust_state.o);
+
       // re-open the new active tab              
       
       active_state.o.w      = active_handle;   
-      active_state.o.behind = gui_handle;
+      active_state.o.behind = adjust_handle;
       active_state.o.x      = tabs.tab[active].scx;
       active_state.o.y      = tabs.tab[active].scy;
         
@@ -953,26 +995,91 @@ Description : Open a !tabby window, and the associated tab pane, so that it is
 *******************************************************************************/
 
 void gui_open(wimp_openstr *openstr)
-{   
+{                            
+   // has the width of the gui changed? 
+
+   int oldWidth = gui_state.o.box.x1 - gui_state.o.box.x0;
+   int newWidth = openstr->box.x1    - openstr->box.x0;
+
+   if (newWidth != oldWidth)
+   {
+      // re-position right scroll icon
+
+      wimp_box bbox;
+
+      bbox.x0 = newWidth - 40 - 14;
+      bbox.y0 = -60;
+      bbox.x1 = newWidth - 14;
+      bbox.y1 = -20;
+
+      resizeIcon(gui_handle, 2, &bbox);
+
+      wimp_redrawstr redrawstr;
+
+      redrawstr.w      = gui_handle;
+      redrawstr.box.x0 = min(newWidth, oldWidth) - 40 - 14;
+      redrawstr.box.y0 = -60;
+      redrawstr.box.x1 = max(newWidth, oldWidth) - 14;
+      redrawstr.box.y1 = -20;
+        
+      wimp_force_redraw(&redrawstr); 
+
+      wimpt_noerr(wimp_open_wind(&gui_state.o));
+   }
+
+   // open adjust size cover
+
+   if (active_handle != 0)
+   {
+      //adjust_state.o.w      = adjust_handle;
+      adjust_state.o.box.x0 = active_state.o.box.x1;   
+      adjust_state.o.box.y0 = active_state.o.box.y0 - 40;
+      adjust_state.o.box.x1 = active_state.o.box.x1 + 40;
+      adjust_state.o.box.y1 = active_state.o.box.y0; 
+      adjust_state.o.behind = openstr->behind;                 
+
+      tabPane_state.o.behind = adjust_handle;      
+   }                                      
+   else
+   {                       
+      adjust_state.o.behind = -3;                                    
+
+      tabPane_state.o.behind = openstr->behind;
+   }
+
+   wimpt_noerr(wimp_open_wind(&adjust_state.o));
+
    // open tab pane                       
 
    tabPane_state.o.box.x0 = openstr->box.x0 + 124;   
    tabPane_state.o.box.y0 = openstr->box.y0;
    tabPane_state.o.box.x1 = openstr->box.x1 - 60;
    tabPane_state.o.box.y1 = openstr->box.y1; 
-   tabPane_state.o.behind = openstr->behind;                 
-   tabPane_state.o.w      = tabPane_handle;
          
    wimpt_noerr(wimp_open_wind(&tabPane_state.o));
+                                        
+   // open gui window
+    
+   gui_state.o.behind = tabPane_handle;
 
-   // open main window
+   memcpy(&gui_state.o.box, &openstr->box, sizeof(wimp_box));
+         
+   wimpt_noerr(wimp_open_wind(&gui_state.o));
 
-   openstr->w      = gui_handle;
-   openstr->box.x0 = openstr->box.x0;                    
-   openstr->behind = tabPane_handle;
-   openstr->box.x1 = openstr->box.x1; 
+   // re-open active window beneath the gui window
+
+   if (active_handle != 0)
+   { 
+      int height = active_state.o.box.y1 - active_state.o.box.y0;
             
-   wimpt_noerr(wimp_open_wind(openstr));
+      active_state.o.box.x1 = gui_state.o.box.x1 - 40;
+      active_state.o.box.y1 = gui_state.o.box.y0 - 2;
+      active_state.o.box.x0 = gui_state.o.box.x0;
+      active_state.o.box.y0 = active_state.o.box.y1 - height;
+      active_state.o.behind = gui_handle;
+
+      sendOpenWindowRequest(active_handle, &active_state.o);
+   }
 }
 
 /*******************************************************************************
@@ -1025,26 +1132,8 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
    {
       case wimp_EOPEN:   // maximise or minimise window 
       {
-         if (active_handle != 0)
-         {     
-            gui_open(&(e->data.o));
-
-            wimp_get_wind_state(active_handle, &active_state); 
-
-            int height = active_state.o.box.y1 - active_state.o.box.y0;
-            
-            active_state.o.w      = active_handle;
-            active_state.o.box.x1 = e->data.o.box.x1 - 40;
-            active_state.o.box.y1 = e->data.o.box.y0 - 2;
-            active_state.o.box.x0 = e->data.o.box.x0;
-            active_state.o.box.y0 = active_state.o.box.y1 - height;
-            active_state.o.behind = gui_handle;
-
-            sendOpenWindowRequest(active_handle, &active_state.o);
-         }
-                                      
-
-      
+         gui_open(&(e->data.o));
+                                            
          break;
       }
       case wimp_ECLOSE:   // close window
@@ -1094,6 +1183,113 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
 
 /*******************************************************************************
 
+Function    : 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+ 
+void adjust_eventHandler(wimp_eventstr *e, void *handle)
+{                                                                                                   
+   static int x, y;   // drag offsets 
+
+   switch(e->e)                                 
+   {   
+      case wimp_ENULL:   // react to null event
+      {   
+         // adjust window is being dragged to re-size active window
+            
+         wimp_mousestr mousestr;
+
+         wimp_openstr openstr;
+
+         wimp_get_point_info(&mousestr);
+           
+         memcpy(&openstr, &gui_state.o, sizeof(wimp_openstr));
+
+         active_state.o.box.x1 = mousestr.x + x;
+         active_state.o.box.y0 = mousestr.y + y + 40;
+         openstr.box.x1        = active_state.o.box.x1 + 40;
+         openstr.behind        = -1;
+
+         gui_open(&openstr);    
+
+         break;
+      }
+      case wimp_EOPEN:    
+      {
+         wimpt_noerr(wimp_open_wind(&e->data.o));
+                                    
+         break;
+      }
+      case wimp_ECLOSE:   // close window
+      {
+         gui_closeDown();
+
+         wimpt_noerr(wimp_close_wind(e->data.o.w));
+         wimpt_noerr(wimp_close_wind(tabPane_handle));
+       
+         break;
+      }                                          
+      case wimp_EBUT:
+      {
+         if (e->data.but.m.bbits == 0x40)
+         {                          
+            // update the state of the active window 
+
+            wimp_get_wind_state(active_handle, &active_state); 
+
+            // initiate drag operation
+
+            wimp_dragstr dragstr;
+
+            x = adjust_state.o.box.x0 - e->data.but.m.x;
+            y = adjust_state.o.box.y0 - e->data.but.m.y;
+
+            dragstr.window    = adjust_handle;
+            dragstr.box.x0    = adjust_state.o.box.x0;
+            dragstr.box.y0    = adjust_state.o.box.y0;
+            dragstr.box.x1    = adjust_state.o.box.x1;
+            dragstr.box.y1    = adjust_state.o.box.y1;
+            dragstr.parent.x0 = adjust_state.o.box.x0 - 1000;
+            dragstr.parent.y0 = adjust_state.o.box.y0 - 1000;
+            dragstr.parent.x1 = adjust_state.o.box.x1 + 1000;
+            dragstr.parent.y1 = adjust_state.o.box.y1 + 1000;
+            dragstr.type      = wimp_USER_FIXED;
+
+            wimp_drag_box(&dragstr);
+
+            win_claim_idle_events(adjust_handle);
+         }
+
+         break;
+      }
+   }
+}
+
+BOOL adjust_unknownEventProcessor(wimp_eventstr *e, void *handle)
+{      
+   switch(e->e)
+   {                                      
+      case wimp_EUSERDRAG:
+      {
+         // drag operation finished, so null events no longer required
+
+         win_claim_idle_events(adjust_handle-1);
+
+         return TRUE;
+      }
+   }
+
+   return FALSE;
+}
+
+/*******************************************************************************
+
 Function    : gui_create
 
 Parameters  : void
@@ -1106,6 +1302,8 @@ Description : Create a new !tabby tab bar windowl.
            
 void gui_create(void)
 {                        
+   // create the main gui
+
    wimp_wind *window = template_syshandle("Window");
 
    if (window == 0)
@@ -1120,7 +1318,37 @@ void gui_create(void)
 
    win_register_event_handler(gui_handle, gui_eventHandler, 0);
 
+   // create the tab pane
+                                       
    tabPane_create();
+   
+   // create the adjust window
+         
+   window = template_syshandle("adjustSize");
+
+   if (window == 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   window->colours[0] = 0xFF;
+
+   if (wimpt_complain(wimp_create_wind(window, &adjust_handle)) != 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   win_register_event_handler(adjust_handle, adjust_eventHandler, 0);
+
+   win_add_unknown_event_processor(adjust_unknownEventProcessor, 0);
+
+   // get initial window states
+
+   wimp_get_wind_state(gui_handle, &gui_state);
+   wimp_get_wind_state(adjust_handle, &adjust_state); 
+   wimp_get_wind_state(tabPane_handle, &tabPane_state);
+
+   gui_setState(STATE_LOCKED);
 }
                                            
 /*******************************************************************************
@@ -1146,13 +1374,13 @@ Description : Callback called by the alarm to repidly monitor the active
 
 void gui_monitor(int time, void *handle)
 {   
-   int delay = 1;
+   int delay = 10;
 
    static wimp_w window = 0;
               
    if (state == STATE_SEARCHING)
    {           
-      // seek to capture a window  
+      // seek window to capture by iterating through the window stack
                          
       if (!wimp_get_wind_state(gui_handle, &gui_state))
       { 
@@ -1190,12 +1418,22 @@ void gui_monitor(int time, void *handle)
       
          int height = active_state.o.box.y1 - active_state.o.box.y0;
 
-         active_state.o.box.x1 = gui_state.o.box.x1 - 40;
-         active_state.o.box.y1 = gui_state.o.box.y0 - 2;
          active_state.o.box.x0 = gui_state.o.box.x0;
          active_state.o.box.y0 = gui_state.o.box.y1 - height;
+         active_state.o.box.x1 = gui_state.o.box.x1 - 40;
+         active_state.o.box.y1 = gui_state.o.box.y0 - 2;
          active_state.o.w      = window;
-         active_state.o.behind = -1;
+         active_state.o.behind = adjust_handle;
+
+         // re-open adjust button over the adjust size icon of the active window
+      
+         adjust_state.o.box.x0 = active_state.o.box.x1;
+         adjust_state.o.box.y0 = active_state.o.box.y0 - 40;  
+         adjust_state.o.box.x1 = adjust_state.o.box.x0 + 40;
+         adjust_state.o.box.y1 = adjust_state.o.box.y0 + 40;
+         adjust_state.o.behind = -1;  
+
+         sendOpenWindowRequest(adjust_handle, &adjust_state.o);      
 
          sendOpenWindowRequest(active_handle, &active_state.o);      
       }
@@ -1212,55 +1450,9 @@ void gui_monitor(int time, void *handle)
 
       wimp_get_wind_state(active_handle, &wstate); 
       
-      // has the window been resized or moved?
+      // has the window title changed
 
-      if (different(&active_state.o.box, &wstate.o.box))
-      {
-         // has it been resize? If so, move right icon
-                        
-         int oldWidth = active_state.o.box.x1 - active_state.o.box.x0;
-         int newWidth = gui_state.o.box.x1 - gui_state.o.box.x0;
-
-         if (newWidth != oldWidth)
-         {
-            wimp_box bbox;
-
-            bbox.x0 = newWidth - 40 - 14;
-            bbox.y0 = -60;
-            bbox.x1 = newWidth - 14;
-            bbox.y1 = -20;
-
-            resizeIcon(gui_handle, 2, &bbox);
-
-            wimp_redrawstr redrawstr;
-
-            redrawstr.w      = gui_handle;
-            redrawstr.box.x0 = -4096;
-            redrawstr.box.y0 = -4096;
-            redrawstr.box.x1 = +4096;
-            redrawstr.box.y1 = +4096;
-   
-            wimp_force_redraw(&redrawstr);    
-         }
-
-         // reopen window
-
-         memcpy(&active_state, &wstate, sizeof(wimp_wstate));
-
-         gui_state.o.box.x0 = active_state.o.box.x0;
-         gui_state.o.box.y0 = active_state.o.box.y1 + 2;
-         gui_state.o.box.x1 = active_state.o.box.x1 + 40;
-         gui_state.o.box.y1 = gui_state.o.box.y0 + 64;
-         gui_state.o.behind = active_handle;
-
-         gui_open(&gui_state.o);
-
-         // re-open active tab underneath the GUI
-
-         active_state.o.behind = gui_handle;
-
-         wimpt_noerr(wimp_open_wind(&active_state.o));
-      }
+      // has the window extent changed
    }
    else
    {
@@ -1383,7 +1575,9 @@ static void icon_left_click(wimp_i icon)
 
 
 int main(void)
-{                                         
+{                        
+  event_setmask((wimp_emask)0);          
+       
    wimpt_init(APP_NAME);
 
    res_init(APP_NAME);   
@@ -1391,8 +1585,6 @@ int main(void)
    template_init();              
 
    dbox_init();     
-
-   gui_create();
 
    baricon("!tabby", (int)resspr_area(), icon_left_click);
 
@@ -1419,13 +1611,13 @@ int main(void)
 
    // open main window
 
-   wimpt_complain(wimp_get_wind_state(gui_handle, &gui_state));
+   gui_create();
 
+   gui_state.o.behind = -1;
    gui_open(&gui_state.o);
 
    // start monitoring windows
 
-   gui_setState(STATE_LOCKED);
 
    alarm_init();
 
