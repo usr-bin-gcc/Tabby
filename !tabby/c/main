@@ -25,7 +25,11 @@ History     : 07/11/2021 v0.0.1 - Started work.
               04/12/2021 v0.5.0 - A small window now intercepts drags on the
                                   adjust size icon, so that !tabby now has
                                   complete control over the dimensions of the
-                                  active window
+                                  active window.
+              05/12/2021 v0.6.0 - When resizing the active window, the drag is
+                                  limited to prevent the maximum extent of the
+                                  window being exceded, but does not work 
+                                  correctly for !draw windows.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -51,6 +55,10 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
               (g) Add a configuration option so that the user can decide whether
                   the windows are closed or just released when the tabby bar is
                   closed or the tab is closed.
+
+              (h) Resizing the active window should implement the maximising
+                  effect of dragging to the bottom and right edges of the
+                  screen.
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -101,6 +109,8 @@ wimp_w hscroll_handle = 0;
 wimp_w adjust_handle  = 0;
 
 wimp_wstate gui_state, active_state, tabPane_state, adjust_state;
+
+wimp_winfo active_winfo;
                  
 #define STATE_SEARCHING 0
 #define STATE_CAPTURING 1
@@ -1243,6 +1253,12 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
 
             wimp_get_wind_state(active_handle, &active_state); 
 
+            // update the window information
+                   
+            active_winfo.w = active_handle;
+
+            wimpt_complain(wimp_get_wind_info(&active_winfo));
+
             // initiate drag operation
 
             wimp_dragstr dragstr;
@@ -1250,15 +1266,39 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             x = adjust_state.o.box.x0 - e->data.but.m.x;
             y = adjust_state.o.box.y0 - e->data.but.m.y;
 
+            wimp_box parent;
+
+            parent.x0 = active_state.o.box.x0 
+                      + max(420, (active_winfo.info.minsize >> 16));  
+            parent.y0 = active_state.o.box.y1
+                      - active_winfo.info.ex.y1
+                      + active_winfo.info.ex.y0
+                      - 40 + 2;
+            parent.x1 = active_state.o.box.x0 
+                      + active_winfo.info.ex.x1
+                      - active_winfo.info.ex.x0
+                      + 40;
+            parent.y1 = active_state.o.box.y1 
+                      - max(124, active_winfo.info.minsize & 0xFFFF);
+
+            LOG("adjust_eventHandler", "minsize = %#x : ex.x0 = %d : ex.y0 = %d : ex.x1 = %d : ex.y1 = %d", 
+              active_winfo.info.ex.x0,  
+              active_winfo.info.ex.y0,
+              active_winfo.info.ex.x1,
+              active_winfo.info.ex.y1,
+              active_winfo.info.minsize);
+
+
+
             dragstr.window    = adjust_handle;
             dragstr.box.x0    = adjust_state.o.box.x0;
             dragstr.box.y0    = adjust_state.o.box.y0;
             dragstr.box.x1    = adjust_state.o.box.x1;
             dragstr.box.y1    = adjust_state.o.box.y1;
-            dragstr.parent.x0 = adjust_state.o.box.x0 - 1000;
-            dragstr.parent.y0 = adjust_state.o.box.y0 - 1000;
-            dragstr.parent.x1 = adjust_state.o.box.x1 + 1000;
-            dragstr.parent.y1 = adjust_state.o.box.y1 + 1000;
+            dragstr.parent.x0 = parent.x0;
+            dragstr.parent.y0 = parent.y0;
+            dragstr.parent.x1 = parent.x1;
+            dragstr.parent.y1 = parent.y1;
             dragstr.type      = wimp_USER_FIXED;
 
             wimp_drag_box(&dragstr);
@@ -1361,10 +1401,10 @@ Parameters  : int   - current time
 Returns     : void
 
 Description : Callback called by the alarm to repidly monitor the active 
-              window, and respond appropriately if it is moved or resized,
-              whenever the current state is STATE_LOCKED.  If the state is
-              STATE_SEARCHING, the application is waiting for a window to
-              be dragged over the tab bar, when this happens, the window is
+              window, and respond appropriately e.g. if the title of the window
+              changes, whenever the current state is STATE_LOCKED.  If the 
+              state is STATE_SEARCHING, the application is waiting for a window 
+              to be dragged over the tab bar, when this happens, the window is
               identified, the state is changed to STATE_CAPTURING and there
               is a delay of 1 second for the user to let go of the window.
               If the state is STATE_CAPTURING, a new active tab is created
@@ -1443,16 +1483,8 @@ void gui_monitor(int time, void *handle)
       gui_setState(STATE_LOCKED);
    }
    else if (active_handle != 0)
-   {                            
-      // monitor behaviour of the captured window
-
-      wimp_wstate wstate;
-
-      wimp_get_wind_state(active_handle, &wstate); 
-      
+   {                                
       // has the window title changed
-
-      // has the window extent changed
    }
    else
    {
