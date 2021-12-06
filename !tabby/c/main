@@ -30,6 +30,8 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   limited to prevent the maximum extent of the
                                   window being exceded, but does not work 
                                   correctly for !draw windows.
+              06/12/2021 v0.6.1 - Fixed bug in resizing, so now works correctly
+                                  with !draw.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -1271,21 +1273,21 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             parent.x0 = active_state.o.box.x0 
                       + max(420, (active_winfo.info.minsize >> 16));  
             parent.y0 = active_state.o.box.y1
-                      - active_winfo.info.ex.y1
-                      + active_winfo.info.ex.y0
+                      - active_winfo.info.box.y1
+                      + active_winfo.info.box.y0
                       - 40 + 2;
             parent.x1 = active_state.o.box.x0 
-                      + active_winfo.info.ex.x1
-                      - active_winfo.info.ex.x0
+                      + active_winfo.info.box.x1
+                      - active_winfo.info.box.x0
                       + 40;
             parent.y1 = active_state.o.box.y1 
                       - max(124, active_winfo.info.minsize & 0xFFFF);
 
-            LOG("adjust_eventHandler", "minsize = %#x : ex.x0 = %d : ex.y0 = %d : ex.x1 = %d : ex.y1 = %d", 
-              active_winfo.info.ex.x0,  
-              active_winfo.info.ex.y0,
-              active_winfo.info.ex.x1,
-              active_winfo.info.ex.y1,
+            LOG("adjust_eventHandler", "minsize = %#x : box.x0 = %d : box.y0 = %d : box.x1 = %d : box.y1 = %d", 
+              active_winfo.info.box.x0,  
+              active_winfo.info.box.y0,
+              active_winfo.info.box.x1,
+              active_winfo.info.box.y1,
               active_winfo.info.minsize);
 
 
