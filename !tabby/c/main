@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Saturday 4th December 2021
+Date        : Thurday 9th December 2021
 
 Author      : Gavin Cawley
 
@@ -32,6 +32,11 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   correctly for !draw windows.
               06/12/2021 v0.6.1 - Fixed bug in resizing, so now works correctly
                                   with !draw.
+              09/12/2021 v0.6.2 - Now monitors the active window in case it
+                                  is resized unexpectedly (e.g. in !draw 
+                                  following a change of paper dimensions).
+                                  Started work on copying the title of the
+                                  active window into the gui title bar.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -607,7 +612,9 @@ void tabPane_selectTab(int tab)
        
       adjust_state.o.behind = gui_handle;
 
-      sendOpenWindowRequest(adjust_handle, &adjust_state.o);
+      // sendOpenWindowRequest(adjust_handle, &adjust_state.o);
+      
+      wimpt_noerr(wimp_open_wind(&adjust_state.o));
 
       // re-open the new active tab              
       
@@ -1119,6 +1126,7 @@ void gui_closeDown(void)
       
       active_state.o.w      = tabs.tab[i].handle;
       active_state.o.behind = -1;
+      active_state.o.w      = tabs.tab[i].handle;
       active_state.o.x      = tabs.tab[i].scx;
       active_state.o.y      = tabs.tab[i].scy;
       
@@ -1283,12 +1291,21 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
                       + 40;
             parent.y1 = active_state.o.box.y1 
                       - max(124, active_winfo.info.minsize & 0xFFFF);
+      
+            int width  = active_winfo.info.ex.x1 
+                       - active_winfo.info.ex.x0;
 
-            LOG("adjust_eventHandler", "minsize = %#x : box.x0 = %d : box.y0 = %d : box.x1 = %d : box.y1 = %d", 
-              active_winfo.info.box.x0,  
-              active_winfo.info.box.y0,
-              active_winfo.info.box.x1,
-              active_winfo.info.box.y1,
+            int height = active_winfo.info.ex.y1 
+                       - active_winfo.info.ex.y0;
+
+            LOG("adjust_eventHandler", "width = %d : height = %d", width, height);
+
+
+            LOG("adjust_eventHandler", " box.x0 = %d : box.y0 = %d : box.x1 = %d : box.y1 = %d : minsize = %#x", 
+              active_winfo.info.ex.x0,  
+              active_winfo.info.ex.y0,
+              active_winfo.info.ex.x1,
+              active_winfo.info.ex.y1,
               active_winfo.info.minsize);
 
 
@@ -1435,8 +1452,7 @@ void gui_monitor(int time, void *handle)
          { 
             window = wstate.o.behind;
 
-            wimp_get_wind_state(window, &wstate);                                  
-           
+            wimp_get_wind_state(window, &wstate);                                            
             if (window != tabPane_handle)
             {
                if (intersects(&gui_state.o.box, &wstate.o.box))
@@ -1476,8 +1492,8 @@ void gui_monitor(int time, void *handle)
          adjust_state.o.box.y1 = adjust_state.o.box.y0 + 40;
          adjust_state.o.behind = -1;  
 
-         sendOpenWindowRequest(adjust_handle, &adjust_state.o);      
-
+         wimpt_noerr(wimp_open_wind(&adjust_state.o));
+   
          sendOpenWindowRequest(active_handle, &active_state.o);      
       }
 
@@ -1486,8 +1502,53 @@ void gui_monitor(int time, void *handle)
       gui_setState(STATE_LOCKED);
    }
    else if (active_handle != 0)
-   {                                
-      // has the window title changed
+   {
+      // has the active window changed size unexpectedly?                                                              
+      wimp_wstate wstate;
+
+      memcpy(&wstate, &active_state, sizeof(active_state));
+
+      wimp_get_wind_state(active_handle, &active_state); 
+
+      if (different(&wstate.o.box, &active_state.o.box)) 
+      {
+         wstate.o.box.x0 = active_state.o.box.x0;
+         wstate.o.box.y0 = active_state.o.box.y1 + 2;
+         wstate.o.box.x1 = active_state.o.box.x1 + 40;
+         wstate.o.box.y1 = active_state.o.box.y1 + 66;
+
+         gui_open(&wstate.o);
+      }
+
+      // has the window title changed? 
+                      
+      wimp_winfo *info = (wimp_winfo*)&block;
+
+      info->w = active_handle;
+    
+      wimpt_complain(wimp_get_wind_info(info));
+
+      if (info->info.titleflags & wimp_INDIRECT)
+      {                                                                  
+         char buffer[512];
+
+         wimpt_complain(wimp_transferblock(identifyOwner(active_handle),
+                        info->info.title.indirecttext.buffer,
+                        wimpt_task(),
+                        buffer,
+                        info->info.title.indirecttext.bufflen));
+
+         info->w = gui_handle;
+
+         wimpt_complain(wimp_get_wind_info(info));
+
+         strncpy(info->info.title.indirecttext.buffer, buffer, 256);
+
+         info->info.title.indirecttext.buffer[255] = '\0';
+
+         gui_open(&gui_state.o);
+
+      }  
    }
    else
    {
@@ -1652,7 +1713,6 @@ int main(void)
    gui_open(&gui_state.o);
 
    // start monitoring windows
-
 
    alarm_init();
 
