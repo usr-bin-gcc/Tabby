@@ -1117,11 +1117,12 @@ void gui_closeDown(void)
    {
       wimp_get_wind_state(tabs.tab[i].handle, &active_state); 
       
+      active_state.o.w      = tabs.tab[i].handle;
       active_state.o.behind = -1;
       active_state.o.x      = tabs.tab[i].scx;
       active_state.o.y      = tabs.tab[i].scy;
       
-      sendOpenWindowRequest(active_handle, &active_state.o);
+      sendOpenWindowRequest(tabs.tab[i].handle, &active_state.o);
    }
 }
    
@@ -1273,12 +1274,12 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             parent.x0 = active_state.o.box.x0 
                       + max(420, (active_winfo.info.minsize >> 16));  
             parent.y0 = active_state.o.box.y1
-                      - active_winfo.info.box.y1
-                      + active_winfo.info.box.y0
+                      - active_winfo.info.ex.y1
+                      + active_winfo.info.ex.y0
                       - 40 + 2;
             parent.x1 = active_state.o.box.x0 
-                      + active_winfo.info.box.x1
-                      - active_winfo.info.box.x0
+                      + active_winfo.info.ex.x1
+                      - active_winfo.info.ex.x0
                       + 40;
             parent.y1 = active_state.o.box.y1 
                       - max(124, active_winfo.info.minsize & 0xFFFF);
