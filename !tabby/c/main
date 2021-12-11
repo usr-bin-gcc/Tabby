@@ -37,6 +37,8 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   following a change of paper dimensions).
                                   Started work on copying the title of the
                                   active window into the gui title bar.
+              11/12/2021 v0.7.0 - Title bar now mirrors the title of the
+                                  active window.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -53,20 +55,18 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
                   these are not too serious at the moment, so it can wail until
                   the design has stabilised/congealed sufficiently.
 
-              (f) Have the tab bar window title copy that of the active window,
-                  and ideally have it match the background colour (perhaps
-                  monitor every 100ms or so?  Could then hide the title bar of
-                  the window, which would make some aspects of management a bit
-                  easier.
-
-              (g) Add a configuration option so that the user can decide whether
+              (f) Add a configuration option so that the user can decide whether
                   the windows are closed or just released when the tabby bar is
                   closed or the tab is closed.
 
-              (h) Resizing the active window should implement the maximising
+              (g) Resizing the active window should implement the maximising
                   effect of dragging to the bottom and right edges of the
                   screen.
 
+              (h) The colour of the active tab should indicate whethe the
+                  active window has the input focus (the title bar of the
+                  !tabby window cannot do this as it is managed by the wimp).
+                                                                            
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
 *******************************************************************************/
@@ -111,11 +111,12 @@ int active = -1;   // the currently active tab (-1 if no tabs)
 wimp_w gui_handle     = 0;
 wimp_w tabPane_handle = 0;
 wimp_w active_handle  = 0;
-wimp_w vscroll_handle = 0;
-wimp_w hscroll_handle = 0;
 wimp_w adjust_handle  = 0;
 
-wimp_wstate gui_state, active_state, tabPane_state, adjust_state;
+wimp_wstate gui_state;
+wimp_wstate active_state;
+wimp_wstate tabPane_state;
+wimp_wstate adjust_state;
 
 wimp_winfo active_winfo;
                  
@@ -145,7 +146,9 @@ Tabs;
 
 Tabs tabs;
 
-char block[32768];
+char* gui_title;
+
+wimp_t active_task;
 
 
 /*******************************************************************************
@@ -356,6 +359,30 @@ void resizeIcon(wimp_w window, wimp_i icon, wimp_box *bbox)
 
 /*******************************************************************************
 
+Function    : forceTitleBarRedraw 
+
+Parameters  : wimp_w    - window handle
+
+Returns     : void
+
+Description : Use the extended syntax of wimp_force_redraw to force a redraw
+              of the title bar of a window.
+
+*******************************************************************************/
+                                                            
+void forceTitleBarRedraw(wimp_w handle)
+{
+   wimp_redrawstr redrawstr;
+
+   redrawstr.w      = handle;
+   redrawstr.box.x0 = 0x4B534154;
+   redrawstr.box.y0 = 3;
+   
+   wimp_force_redraw(&redrawstr); 
+}
+
+/*******************************************************************************
+
 Function    : intersects
 
 Parameters  : wimp_box - pointer to bounding box of first window
@@ -502,8 +529,8 @@ void tabPane_forceRedraw(void)
    wimp_redrawstr redrawstr;
 
    redrawstr.w      = tabPane_handle;
-   redrawstr.box.x0 = -4096;
-   redrawstr.box.y0 = -4096;
+   redrawstr.box.x0 = -64;
+   redrawstr.box.y0 = -0;
    redrawstr.box.x1 = +4096;
    redrawstr.box.y1 = +4096;
    
@@ -597,6 +624,7 @@ void tabPane_selectTab(int tab)
 
       active        = tab;                                                                                         
       active_handle = tabs.tab[active].handle;
+      active_task   = identifyOwner(active_handle);
 
       // change colour and appearance of the new active tab
 
@@ -837,23 +865,23 @@ void tabPane_addTab(wimp_w handle)
 {                              
    // get info about the window
                       
-   wimp_winfo *info = (wimp_winfo*)&block;
+   wimp_winfo info;
 
-   info->w = handle;
+   info.w = handle;
    
-   wimpt_complain(wimp_get_wind_info(info));
+   wimpt_complain(wimp_get_wind_info(&info));
       
    char *label;
 
-   if (info->info.titleflags & wimp_INDIRECT)
+   if (info.info.titleflags & wimp_INDIRECT)
    {                                                                  
       char buffer[512];
 
       wimpt_complain(wimp_transferblock(identifyOwner(handle),
-                         info->info.title.indirecttext.buffer,
+                         info.info.title.indirecttext.buffer,
                          wimpt_task(),
                          buffer,
-                         info->info.title.indirecttext.bufflen));
+                         info.info.title.indirecttext.bufflen));
 
       label = tabPane_extractLabel(buffer);
    }  
@@ -863,7 +891,7 @@ void tabPane_addTab(wimp_w handle)
 
       buffer[0] = '\0';
 
-      strncat(buffer, info->info.title.text, 12);
+      strncat(buffer, info.info.title.text, 12);
 
       label = strdup(buffer);
    }    
@@ -914,8 +942,8 @@ void tabPane_addTab(wimp_w handle)
    // record window handle and scroll bar positions
 
    tabs.tab[tabs.n].handle = handle;
-   tabs.tab[tabs.n].scx    = info->info.scx;
-   tabs.tab[tabs.n].scy    = info->info.scy;
+   tabs.tab[tabs.n].scx    = info.info.scx;
+   tabs.tab[tabs.n].scy    = info.info.scy;
 
    tabPane_selectTab(tabs.n++); 
           
@@ -1291,24 +1319,6 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
                       + 40;
             parent.y1 = active_state.o.box.y1 
                       - max(124, active_winfo.info.minsize & 0xFFFF);
-      
-            int width  = active_winfo.info.ex.x1 
-                       - active_winfo.info.ex.x0;
-
-            int height = active_winfo.info.ex.y1 
-                       - active_winfo.info.ex.y0;
-
-            LOG("adjust_eventHandler", "width = %d : height = %d", width, height);
-
-
-            LOG("adjust_eventHandler", " box.x0 = %d : box.y0 = %d : box.x1 = %d : box.y1 = %d : minsize = %#x", 
-              active_winfo.info.ex.x0,  
-              active_winfo.info.ex.y0,
-              active_winfo.info.ex.x1,
-              active_winfo.info.ex.y1,
-              active_winfo.info.minsize);
-
-
 
             dragstr.window    = adjust_handle;
             dragstr.box.x0    = adjust_state.o.box.x0;
@@ -1407,6 +1417,18 @@ void gui_create(void)
    wimp_get_wind_state(gui_handle, &gui_state);
    wimp_get_wind_state(adjust_handle, &adjust_state); 
    wimp_get_wind_state(tabPane_handle, &tabPane_state);
+                         
+   // get pointer to gui title icon buffer
+                      
+   wimp_winfo winfo;
+
+   winfo.w = gui_handle;
+       
+   wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
+   
+   gui_title = winfo.info.title.indirecttext.buffer;
+     
+   // gui initially empty
 
    gui_setState(STATE_LOCKED);
 }
@@ -1522,33 +1544,31 @@ void gui_monitor(int time, void *handle)
 
       // has the window title changed? 
                       
-      wimp_winfo *info = (wimp_winfo*)&block;
+      wimp_winfo winfo;
 
-      info->w = active_handle;
-    
-      wimpt_complain(wimp_get_wind_info(info));
+      winfo.w = active_handle;
+       
+      wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
 
-      if (info->info.titleflags & wimp_INDIRECT)
+      if (winfo.info.titleflags & wimp_INDIRECT)
       {                                                                  
          char buffer[512];
-
-         wimpt_complain(wimp_transferblock(identifyOwner(active_handle),
-                        info->info.title.indirecttext.buffer,
+ 
+         wimpt_complain(wimp_transferblock(active_task,
+                        winfo.info.title.indirecttext.buffer,
                         wimpt_task(),
                         buffer,
-                        info->info.title.indirecttext.bufflen));
+                        winfo.info.title.indirecttext.bufflen));
 
-         info->w = gui_handle;
+         if (strncmp(gui_title, buffer, 255))
+         {
+            strncpy(gui_title, buffer, 256);
 
-         wimpt_complain(wimp_get_wind_info(info));
+            gui_title[255] = '\0';
 
-         strncpy(info->info.title.indirecttext.buffer, buffer, 256);
-
-         info->info.title.indirecttext.buffer[255] = '\0';
-
-         gui_open(&gui_state.o);
-
-      }  
+            forceTitleBarRedraw(gui_handle);
+         }
+      }   
    }
    else
    {
@@ -1672,7 +1692,16 @@ static void icon_left_click(wimp_i icon)
 
 int main(void)
 {                        
-  event_setmask((wimp_emask)0);          
+  event_setmask((wimp_emask)(wimp_EMREDRAW      |
+                             wimp_EMPTRLEAVE    |
+                             wimp_EMPTRENTER    |
+                             wimp_EMKEY         |
+                             wimp_EMSCROLL      |
+                             wimp_EMLOSECARET   |
+                             wimp_EMGAINCARET   |
+                             wimp_EMSEND        |
+                             wimp_EMSENDWANTACK |
+                             wimp_EMACK));          
        
    wimpt_init(APP_NAME);
 
