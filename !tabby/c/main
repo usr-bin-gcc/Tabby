@@ -39,6 +39,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   active window into the gui title bar.
               11/12/2021 v0.7.0 - Title bar now mirrors the title of the
                                   active window.
+              12/12/2021 v0.7.1 - Adjust window now hidden if no active tab.
+                                  TabPane new redrawn correctly when a tab is
+                                  released.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -66,6 +69,13 @@ To do       : (a) Scroll buttons should only be visible when it is possible to
               (h) The colour of the active tab should indicate whethe the
                   active window has the input focus (the title bar of the
                   !tabby window cannot do this as it is managed by the wimp).
+
+              (i) The adjust window should have the adjust size icon, rather
+                  than a beige background, but that is useful while debugging.
+
+              (j) If something brings the active window above the gui in the
+                  window stack, the gui should be re-opened to bring it back
+                  below again.
                                                                             
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -529,8 +539,8 @@ void tabPane_forceRedraw(void)
    wimp_redrawstr redrawstr;
 
    redrawstr.w      = tabPane_handle;
-   redrawstr.box.x0 = -64;
-   redrawstr.box.y0 = -0;
+   redrawstr.box.x0 = -0;
+   redrawstr.box.y0 = -64;
    redrawstr.box.x1 = +4096;
    redrawstr.box.y1 = +4096;
    
@@ -690,6 +700,12 @@ void tabPane_deleteTab(int tab)
    {
       active        = -1;   
       active_handle = 0;        
+                     
+      // hide adjust window
+
+      adjust_state.o.behind = -3;
+      
+      wimpt_noerr(wimp_open_wind(&adjust_state.o));
    }
    else if (tab == active)
    {                 
@@ -959,8 +975,48 @@ void tabPane_addTab(wimp_w handle)
 
    wimp_force_redraw(&redrawstr);
 }
+                                                                                
 
-        
+/*******************************************************************************
+
+Function    : tabPane_position
+
+Parameters  : wimp_box* - pointer to bounding box of the !tabby gui window
+
+Returns     : void
+
+Description : Position the tab pane according to the position and dimensions 
+              of the !tabby gui window and the number of tabs.  If there are
+              no tabs or the first tab is visible, the tab pane covers the
+              left scroll icon.  If there are no tabs, or the last tab is
+              visible, the tab pane covers the right scroll icon.
+
+*******************************************************************************/
+                                 
+void tabPane_position(wimp_box *box)
+{
+   if (tabs.n == 0 || tabPane_state.o.x == 0)
+   {
+      tabPane_state.o.box.x0 = box->x0 + 68;   
+   }
+   else
+   {
+      tabPane_state.o.box.x0 = box->x0 + 124;   
+   }
+
+   if (tabs.n == 0)
+   {
+      tabPane_state.o.box.x1 = box->x1;
+   }
+   else
+   {
+      tabPane_state.o.box.x1 = box->x1 - 60;
+   }
+
+   tabPane_state.o.box.y0 = box->y0; 
+   tabPane_state.o.box.y1 = box->y1; 
+}
+
 /*******************************************************************************
 *                                                                              * 
 *                               Main GUI Functions                             * 
@@ -1098,11 +1154,13 @@ void gui_open(wimp_openstr *openstr)
 
    // open tab pane                       
 
-   tabPane_state.o.box.x0 = openstr->box.x0 + 124;   
-   tabPane_state.o.box.y0 = openstr->box.y0;
-   tabPane_state.o.box.x1 = openstr->box.x1 - 60;
-   tabPane_state.o.box.y1 = openstr->box.y1; 
-         
+   //tabPane_state.o.box.x0 = openstr->box.x0 + 124;   
+   //tabPane_state.o.box.y0 = openstr->box.y0;
+   //tabPane_state.o.box.x1 = openstr->box.x1 - 60;
+   //tabPane_state.o.box.y1 = openstr->box.y1; 
+    
+   tabPane_position(&gui_state.o.box);
+     
    wimpt_noerr(wimp_open_wind(&tabPane_state.o));
                                         
    // open gui window
