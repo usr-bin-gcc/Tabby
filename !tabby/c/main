@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Thurday 9th December 2021
+Date        : Sunday 19th December 2021
 
 Author      : Gavin Cawley
 
@@ -48,6 +48,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   if throwback is being used with the DDE.
               18/12/2021 v0.8.0 - Tab pane scroll icons now hidden when not
                                   useful.
+              19/12/2021 v0.8.1 - Minor bug-fix, tab pane now re-opens
+                                  correctly if active window changes size
+                                  unexpectedly.
 
 To do       : (a) Scroll buttons should only be visible when it is possible to
                   scroll further in that direction.  Make the most of the 
@@ -1178,9 +1181,9 @@ void gui_open(wimp_openstr *openstr)
    wimpt_noerr(wimp_open_wind(&adjust_state.o));
 
    // open tab pane                       
-    
-   tabPane_position(&gui_state.o.box);
-     
+         
+   tabPane_position(&openstr->box);
+
    wimpt_noerr(wimp_open_wind(&tabPane_state.o));
                                         
    // open gui window
