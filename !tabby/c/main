@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 19th December 2021
+Date        : Sunday 25th December 2021
 
 Author      : Gavin Cawley
 
@@ -51,41 +51,37 @@ History     : 07/11/2021 v0.0.1 - Started work.
               19/12/2021 v0.8.1 - Minor bug-fix, tab pane now re-opens
                                   correctly if active window changes size
                                   unexpectedly.
+              25/12/2021 v0.9.0 - Refactored to allow multiple instances. A
+                                  !tabby instance is prevented from capturing
+                                  another !tabby instance so that bad things
+                                  don't happen.  Maintains a list of active
+                                  instances, so that all captured windows can
+                                  be released when the task exits.
 
-To do       : (a) Scroll buttons should only be visible when it is possible to
-                  scroll further in that direction.  Make the most of the 
-                  available width to display as many tabs as possible.
+To do       : (a) Allow tabs to be rearranged by dragging.
 
-              (b) Allow tabs to be rearranged by dragging.
-
-              (c) Support for multiple independent tab bars.
-
-              (d) Refactor tab pane so that tabs can be the minimum width for
+              (b) Refactor tab pane so that tabs can be the minimum width for
                   the label, and move tabs, rather than reuse them.
 
-              (e) Need to refactor at some point to eliminate memory leaks,
+              (c) Need to refactor at some point to eliminate memory leaks,
                   these are not too serious at the moment, so it can wail until
                   the design has stabilised/congealed sufficiently.
 
-              (f) Add a configuration option so that the user can decide whether
+              (d) Add a configuration option so that the user can decide whether
                   the windows are closed or just released when the tabby bar is
                   closed or the tab is closed.
 
-              (g) Resizing the active window should implement the maximising
+              (e) Resizing the active window should implement the maximising
                   effect of dragging to the bottom and right edges of the
                   screen.
 
-              (h) The colour of the active tab should indicate whethe the
+              (f) The colour of the active tab should indicate whethe the
                   active window has the input focus (the title bar of the
                   !tabby window cannot do this as it is managed by the wimp).
 
-              (i) The adjust window should have the adjust size icon, rather
+              (g) The adjust window should have the adjust size icon, rather
                   than a beige background, but that is useful while debugging.
 
-              (j) If something brings the active window above the gui in the
-                  window stack, the gui should be re-opened to bring it back
-                  below again.
-                                                                            
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
 *******************************************************************************/
@@ -116,6 +112,10 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
    
 #define APP_NAME "Tabby"
 #define MENU_ITEMS ">Info,Quit"
+
+#define STATE_SEARCHING 0
+#define STATE_CAPTURING 1
+#define STATE_LOCKED    2
                  
 #define MAX_TABS (256)
 #define TAB_WIDTH (278)
@@ -125,26 +125,6 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
 
 menu imenu;       
 
-int active = -1;   // the currently active tab (-1 if no tabs)               
-
-wimp_w gui_handle     = 0;
-wimp_w tabPane_handle = 0;
-wimp_w active_handle  = 0;
-wimp_w adjust_handle  = 0;
-
-wimp_wstate gui_state;
-wimp_wstate active_state;
-wimp_wstate tabPane_state;
-wimp_wstate adjust_state;
-
-wimp_winfo active_winfo;
-                 
-#define STATE_SEARCHING 0
-#define STATE_CAPTURING 1
-#define STATE_LOCKED    2
-                         
-int state = STATE_SEARCHING;
-
 typedef struct TabStr
 {  
    wimp_w handle;
@@ -153,24 +133,51 @@ typedef struct TabStr
 }
 Tab;
           
-typedef struct TabsStr
+typedef struct TabbyStr
 {
+   // information about tabs
+
    Tab tab[MAX_TABS];
 
    int n;
 
-   int active;
+   int active;   // the currently active tab (-1 if no tabs)               
+                            
+   // information about windows
+
+   wimp_w gui_handle;
+   wimp_w tabPane_handle;
+   wimp_w active_handle;
+   wimp_w adjust_handle;
+
+   wimp_wstate gui_state;
+   wimp_wstate active_state;
+   wimp_wstate tabPane_state;
+   wimp_wstate adjust_state;
+
+   wimp_winfo active_winfo;
+
+   wimp_t active_task;
+
+   // state information
+                                          
+   int state;
+
+   char* gui_title;
+
+   // pointer to next instance in the list
+
+   struct TabbyStr *next;
 }
-Tabs;             
+Tabby;                 
 
-Tabs tabs;
+void gui_open(Tabby *tabby, wimp_openstr* openstr);
 
-char* gui_title;
+void gui_closeDown(Tabby *tabby);
 
-wimp_t active_task;
+Tabby* gui_create(void);
 
-void gui_open(wimp_openstr* openstr);
-
+Tabby *instances = NULL;
 
 /*******************************************************************************
 *                                                                              * 
@@ -450,6 +457,48 @@ BOOL different(wimp_box *x, wimp_box *y)
 
 /*******************************************************************************
 *                                                                              * 
+*                            Instance List Management                          * 
+*                                                                              * 
+*******************************************************************************/
+
+
+Tabby* instance_new(void)
+{ 
+   Tabby *tabby = gui_create();
+                
+   tabby->next = instances;
+   instances   = tabby;
+
+   return tabby;
+}                       
+
+void instance_delete(Tabby *tabby)
+{ 
+   if (instances == tabby)
+   {   
+      instances = tabby->next;   
+
+      gui_closeDown(tabby);
+   }
+   else if (instances != NULL)
+   {
+      for (Tabby *t = instances; t->next != NULL; t = t->next)
+      { 
+         if (t->next == tabby)
+         {                
+            t->next = tabby->next;
+ 
+            gui_closeDown(tabby);
+
+            break;
+         }
+      }
+   }
+}
+
+
+/*******************************************************************************
+*                                                                              * 
 *                                    Tab Pane                                  * 
 *                                                                              * 
 *******************************************************************************/
@@ -459,7 +508,8 @@ BOOL different(wimp_box *x, wimp_box *y)
 
 Function    : tabPane_position
 
-Parameters  : wimp_box* - pointer to bounding box of the !tabby gui window
+Parameters  : Tabby*    - pointer to !tabby gui instance
+              wimp_box* - pointer to bounding box of the !tabby gui window
 
 Returns     : void
 
@@ -471,20 +521,18 @@ Description : Position the tab pane according to the position and dimensions
 
 *******************************************************************************/
                                  
-void tabPane_position(wimp_box *box)
+void tabPane_position(Tabby *tabby, wimp_box *box)
 {
-   LOG("tabPane_position", "tabPane_state.o.x = %d\n", tabPane_state.o.x);
-
    int width = box->x1 - box->x0;
 
-   int left  = (tabs.n == 0 || tabPane_state.o.x <= 0) ? 68 : 124;
+   int left  = (tabby->n == 0 || tabby->tabPane_state.o.x <= 0) ? 68 : 124;
 
-   int right = (tabs.n*TAB_WIDTH < width + tabPane_state.o.x - left) ? 0 : 60;
+   int right = (tabby->n*TAB_WIDTH < width+tabby->tabPane_state.o.x-left) ? 0 : 60;
 
-   tabPane_state.o.box.x0 = box->x0 + left;  
-   tabPane_state.o.box.x1 = box->x1 - right;    
-   tabPane_state.o.box.y0 = box->y0; 
-   tabPane_state.o.box.y1 = box->y1; 
+   tabby->tabPane_state.o.box.x0 = box->x0 + left;  
+   tabby->tabPane_state.o.box.x1 = box->x1 - right;    
+   tabby->tabPane_state.o.box.y0 = box->y0; 
+   tabby->tabPane_state.o.box.y1 = box->y1; 
 }               
          
 /*******************************************************************************
@@ -498,18 +546,16 @@ Returns     :
 Description : 
 
 *******************************************************************************/          
-void tabPane_scrollLeft(void)
+void tabPane_scrollLeft(Tabby *tabby)
 {
-   tabPane_state.o.x -= TAB_WIDTH;
+   tabby->tabPane_state.o.x -= TAB_WIDTH;
 
-   LOG("tabPane_scrollLeft", "tabPane_state.o.x = %d\n", tabPane_state.o.x);   
-
-   if (tabPane_state.o.x <= 0)
+   if (tabby->tabPane_state.o.x <= 0)
    {
-      tabPane_position(&gui_state.o.box);
+      tabPane_position(tabby, &tabby->gui_state.o.box);
    }
 
-   gui_open(&gui_state.o);
+   gui_open(tabby, &tabby->gui_state.o);
 }        
 
 /*******************************************************************************
@@ -524,16 +570,16 @@ Description :
 
 *******************************************************************************/ 
 
-void tabPane_scrollRight(void)
+void tabPane_scrollRight(Tabby *tabby)
 {                         
-   tabPane_state.o.x += TAB_WIDTH;   
+   tabby->tabPane_state.o.x += TAB_WIDTH;   
 
-   if (tabPane_state.o.x < TAB_WIDTH)
+   if (tabby->tabPane_state.o.x < TAB_WIDTH)
    {
-      tabPane_position(&gui_state.o.box);
+      tabPane_position(tabby, &tabby->gui_state.o.box);
    }
 
-   gui_open(&gui_state.o);
+   gui_open(tabby, &tabby->gui_state.o);
 }
              
 /*******************************************************************************
@@ -612,11 +658,11 @@ To do       : A bit of a hack at the moment, needs to be properly
 
 *******************************************************************************/
 
-void tabPane_forceRedraw(void)
+void tabPane_forceRedraw(Tabby *tabby)
 {
    wimp_redrawstr redrawstr;
 
-   redrawstr.w      = tabPane_handle;
+   redrawstr.w      = tabby->tabPane_handle;
    redrawstr.box.x0 = -0;
    redrawstr.box.y0 = -64;
    redrawstr.box.x1 = +4096;
@@ -629,7 +675,8 @@ void tabPane_forceRedraw(void)
 
 Function    : tabPane_releaseWindow
 
-Parameters  : int - tab number
+Parameters  : Tabby* - pointer to !tabby gui instance
+              int    - tab number
 
 Returns     : void
 
@@ -640,28 +687,29 @@ Description : Release a window associated with a tab.  The window is re-opened
 
 *******************************************************************************/
                                                             
-void tabPane_releaseWindow(int tab)
+void tabPane_releaseWindow(Tabby *tabby, int tab)
 {
    wimp_wstate wstate;
 
-   wimp_get_wind_state(tabs.tab[tab].handle, &wstate); 
+   wimp_get_wind_state(tabby->tab[tab].handle, &wstate); 
       
    wstate.o.behind = -1;
-   wstate.o.x      = tabs.tab[tab].scx;
-   wstate.o.y      = tabs.tab[tab].scy;
-   wstate.o.box.x0 = active_state.o.box.x0 + 64; 
-   wstate.o.box.y0 = active_state.o.box.y0 - 64;
-   wstate.o.box.x1 = active_state.o.box.x1 + 64;
-   wstate.o.box.y1 = active_state.o.box.y1 - 64;
+   wstate.o.x      = tabby->tab[tab].scx;
+   wstate.o.y      = tabby->tab[tab].scy;
+   wstate.o.box.x0 = tabby->active_state.o.box.x0 + 64; 
+   wstate.o.box.y0 = tabby->active_state.o.box.y0 - 64;
+   wstate.o.box.x1 = tabby->active_state.o.box.x1 + 64;
+   wstate.o.box.y1 = tabby->active_state.o.box.y1 - 64;
       
-   sendOpenWindowRequest(tabs.tab[tab].handle, &wstate.o); 
+   sendOpenWindowRequest(tabby->tab[tab].handle, &wstate.o); 
 }
                                                                      
 /*******************************************************************************
 
 Function    : tabPane_selectTab 
 
-Parameters  : int - index of tab to become the active tab
+Parameters  : Tabby* - pointer to a !tabby gui instance
+              int    - index of tab to become the active tab
 
 Returns     : void
 
@@ -674,78 +722,77 @@ Description : Select a new active tab, changing the colour an appearance of the
 
 *******************************************************************************/
 
-void tabPane_selectTab(int tab)                                                  {  
+void tabPane_selectTab(Tabby *tabby, int tab)
+{  
    wimp_redrawstr r;
    
    wimp_icon info;
 
-   if (tab != active)
+   if (tab != tabby->active)
    {  
-      if (active != -1)
+      if (tabby->active != -1)
       {                 
          // change colour and appearance of the old active tab
 
-         wimp_get_icon_info(tabPane_handle, active*2, &info); 
+         wimp_get_icon_info(tabby->tabPane_handle, tabby->active*2, &info); 
 
          info.data.indirecttext.validstring[1] = '1';
 
-         wimp_set_icon_state(tabPane_handle, 2*active, 
+         wimp_set_icon_state(tabby->tabPane_handle, 2*tabby->active, 
             (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
             (wimp_iconflags)(0xF0000000U | wimp_IFILLED));    
          
          // hide the old active window
 
-         wimp_get_wind_state(active_handle, &active_state); 
+         wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
                                  
-         active_state.o.behind = -3;
+         tabby->active_state.o.behind = -3;
 
-         sendOpenWindowRequest(active_handle, &active_state.o);
+         sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
 
          // store scroll positions for when it is next active
 
-         tabs.tab[active].scx = active_state.o.x;
-         tabs.tab[active].scy = active_state.o.y;
+         tabby->tab[tabby->active].scx = tabby->active_state.o.x;
+         tabby->tab[tabby->active].scy = tabby->active_state.o.y;
       }
 
       // change the active tab
 
-      active        = tab;                                                                                         
-      active_handle = tabs.tab[active].handle;
-      active_task   = identifyOwner(active_handle);
+      tabby->active        = tab;                                  
+      tabby->active_handle = tabby->tab[tabby->active].handle;
+      tabby->active_task   = identifyOwner(tabby->active_handle);
 
       // change colour and appearance of the new active tab
 
-      wimp_get_icon_info(tabPane_handle, 2*tab, &info); 
+      wimp_get_icon_info(tabby->tabPane_handle, 2*tab, &info); 
 
       info.data.indirecttext.validstring[1] = '2';
 
-      wimp_set_icon_state(tabPane_handle, 2*tab, 
+      wimp_set_icon_state(tabby->tabPane_handle, 2*tab, 
          (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
          (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
 
       // re-open adjust window
        
-      adjust_state.o.behind = gui_handle;
-
-      // sendOpenWindowRequest(adjust_handle, &adjust_state.o);
+      tabby->adjust_state.o.behind = tabby->gui_handle;
       
-      wimpt_noerr(wimp_open_wind(&adjust_state.o));
+      wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
 
       // re-open the new active tab              
       
-      active_state.o.w      = active_handle;   
-      active_state.o.behind = adjust_handle;
-      active_state.o.x      = tabs.tab[active].scx;
-      active_state.o.y      = tabs.tab[active].scy;
+      tabby->active_state.o.w      = tabby->active_handle;   
+      tabby->active_state.o.behind = tabby->adjust_handle;
+      tabby->active_state.o.x      = tabby->tab[tabby->active].scx;
+      tabby->active_state.o.y      = tabby->tab[tabby->active].scy;
         
-      sendOpenWindowRequest(active_handle, &active_state.o);
+      sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
    }
 
-   r.w      = tabPane_handle;
-   r.box.x0 = tabPane_state.o.box.x0;
-   r.box.y0 = tabPane_state.o.box.y0;
-   r.box.x1 = tabPane_state.o.box.x1;
-   r.box.y1 = tabPane_state.o.box.y1;
+   r.w      = tabby->tabPane_handle;
+   r.box.x0 = tabby->tabPane_state.o.box.x0;
+   r.box.y0 = tabby->tabPane_state.o.box.y0;
+   r.box.x1 = tabby->tabPane_state.o.box.x1;
+   r.box.y1 = tabby->tabPane_state.o.box.y1;
 
    wimp_force_redraw(&r);     
 }
@@ -754,7 +801,8 @@ void tabPane_selectTab(int tab)                                                 
 
 Function    : tabPane_deleteTab 
 
-Parameters  : int - index of tab to be deleted
+Parameters  : Tabby* - pointer to a !tabby gui instance
+              int    - index of tab to be deleted
 
 Returns     : void
 
@@ -769,47 +817,47 @@ Description : Delete a tab.  It isn't clear at the moment whether the correct
 
 *******************************************************************************/
                        
-void tabPane_deleteTab(int tab)
+void tabPane_deleteTab(Tabby *tabby, int tab)
 {  
    // deselect the tab if currently active
                                          
-   if (tabs.n == 1)
+   if (tabby->n == 1)
    {
-      active        = -1;   
-      active_handle = 0;        
+      tabby->active        = -1;   
+      tabby->active_handle = 0;        
                      
       // hide adjust window
 
-      adjust_state.o.behind = -3;
+      tabby->adjust_state.o.behind = -3;
       
-      wimpt_noerr(wimp_open_wind(&adjust_state.o));
+      wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
    }
-   else if (tab == active)
+   else if (tab == tabby->active)
    {                 
-      tabPane_selectTab(tab == 0 ? 1 : (tab-1));
+      tabPane_selectTab(tabby, tab == 0 ? 1 : (tab-1));
    }            
 
    // release window
 
-   tabPane_releaseWindow(tab);
+   tabPane_releaseWindow(tabby, tab);
 
    // update the tab bar     
        
-   for (int i = tab + 1; i < tabs.n; i++)
+   for (int i = tab + 1; i < tabby->n; i++)
    {         
-      if (i == active)
+      if (i == tabby->active)
       {
-         active--;
+         tabby->active--;
       }           
 
-      tabs.tab[i-1].handle = tabs.tab[i].handle;
-      tabs.tab[i-1].scx    = tabs.tab[i].scx;
-      tabs.tab[i-1].scy    = tabs.tab[i].scy;
+      tabby->tab[i-1].handle = tabby->tab[i].handle;
+      tabby->tab[i-1].scx    = tabby->tab[i].scx;
+      tabby->tab[i-1].scy    = tabby->tab[i].scy;
 
       wimp_icon icon1, icon2;
 
-      wimp_get_icon_info(tabPane_handle, (i-1)*2, &icon1); 
-      wimp_get_icon_info(tabPane_handle, i*2,     &icon2); 
+      wimp_get_icon_info(tabby->tabPane_handle, (i-1)*2, &icon1); 
+      wimp_get_icon_info(tabby->tabPane_handle, i*2,     &icon2); 
 
       strncpy(icon1.data.indirecttext.buffer, 
               icon2.data.indirecttext.buffer, 15);
@@ -817,27 +865,27 @@ void tabPane_deleteTab(int tab)
       strncpy(icon1.data.indirecttext.validstring, 
               icon2.data.indirecttext.validstring, 2);
 
-      wimp_set_icon_state(tabPane_handle, 2*(i-1), icon2.flags, 
+      wimp_set_icon_state(tabby->tabPane_handle, 2*(i-1), icon2.flags, 
          (wimp_iconflags)0xFFFFFFFF);
    }
 
-   tabs.n--;               
+   tabby->n--;               
 
-   wimp_delete_icon(tabPane_handle, 2*tabs.n);
-   wimp_delete_icon(tabPane_handle, 2*tabs.n+1);
+   wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n);
+   wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n+1);
 
-   tabPane_forceRedraw();
+   tabPane_forceRedraw(tabby);
 
-   gui_open(&gui_state.o);
+   gui_open(tabby, &tabby->gui_state.o);
 }           
 
 /*******************************************************************************
 
 Function    : tabPane_mouseClickHandler
 
-Parameters  : wimp_mousestr* - pointer to struct describing mouse event
+Parameters  : Tabby*         - pointer to a !tabby gui instance
+              wimp_mousestr* - pointer to struct describing mouse event
               wimp_bbits     - additional information about mouse event
-              Tabs*          - pointer to structure describing tabs
 
 Returns     : void
 
@@ -846,9 +894,9 @@ Description : Respond to mouse button events over the tab pane, to determine
 
 *******************************************************************************/
 
-static void tabPane_mouseClickHandler(wimp_mousestr *ms, 
-                                      wimp_bbits mbits,
-                                      Tabs *tabs)
+static void tabPane_mouseClickHandler(Tabby *tabby,
+                                      wimp_mousestr *ms, 
+                                      wimp_bbits mbits)
 {     
    wimp_icon info;
 
@@ -856,20 +904,20 @@ static void tabPane_mouseClickHandler(wimp_mousestr *ms,
    {
       // tab clicked
 
-      wimp_get_icon_info(tabPane_handle, ms->i, &info);
+      wimp_get_icon_info(tabby->tabPane_handle, ms->i, &info);
 
       char *valid = info.data.indirecttext.validstring;
             
       if (valid[1] == '1')
       {
-         tabPane_selectTab(ms->i/2);
+         tabPane_selectTab(tabby, ms->i/2);
       } 
    }
    else
    {
       // tab close button clicked      
 
-      tabPane_deleteTab(ms->i/2);
+      tabPane_deleteTab(tabby, ms->i/2);
    }
 }          
 
@@ -878,7 +926,7 @@ static void tabPane_mouseClickHandler(wimp_mousestr *ms,
 Function    : tabPane_eventHandler 
 
 Parameters  : wimp_eventstr* - pointer to struct describing the event
-              void*          - pointer to workspace
+              void*          - pointer to workspace (a !tabby gui instance)
 
 Returns     : void
 
@@ -887,7 +935,9 @@ Description : Main event handler for the tab pane of a !tabby window.
 *******************************************************************************/
 
 void tabPane_eventHandler(wimp_eventstr *e, void *handle)
-{
+{                              
+   Tabby *tabby = (Tabby*)handle;
+
    switch(e->e)
    {
       case wimp_EOPEN:   // maximise or minimise window 
@@ -904,8 +954,7 @@ void tabPane_eventHandler(wimp_eventstr *e, void *handle)
       } 
       case wimp_EBUT:
       {        
-         tabPane_mouseClickHandler(&(e->data.but.m), e->data.but.b,
-            (Tabs*)handle);
+         tabPane_mouseClickHandler(tabby, &(e->data.but.m), e->data.but.b);
 
          break;
       }
@@ -916,7 +965,7 @@ void tabPane_eventHandler(wimp_eventstr *e, void *handle)
 
 Function    : tabPane_create
 
-Parameters  : void
+Parameters  : Tabby* - pointer to a !tabby gui instance
 
 Returns     : void
 
@@ -924,7 +973,7 @@ Description : Create a new tab pane for a !tabby window.
 
 *******************************************************************************/
 
-void tabPane_create(void)
+void tabPane_create(Tabby *tabby)
 {                        
    wimp_wind *window = template_syshandle("TabPane");
 
@@ -933,21 +982,23 @@ void tabPane_create(void)
       exit(EXIT_FAILURE);
    }
 
-   if (wimpt_complain(wimp_create_wind(window, &tabPane_handle)) != 0)
+   if (wimpt_complain(wimp_create_wind(window, &tabby->tabPane_handle)) != 0)
    {
       exit(EXIT_FAILURE);
    }
 
-   win_register_event_handler(tabPane_handle, tabPane_eventHandler, 0);
+   win_register_event_handler(tabby->tabPane_handle, 
+      tabPane_eventHandler, (void*)tabby);
 
-   tabs.n = 0;
+   tabby->n = 0;
 }
 
 /*******************************************************************************
 
 Function    : tabPane_addTab
 
-Parameters  : wimp_w - handle of a window to be managed by !tabby
+Parameters  : Tabby* - pointer to a !tabby gui instance
+              wimp_w - handle of a window to be managed by !tabby
 
 Returns     : void
 
@@ -956,7 +1007,7 @@ Description : Create a new tab on the tab bar for the specified window and
 
 *******************************************************************************/
                                  
-void tabPane_addTab(wimp_w handle)
+void tabPane_addTab(Tabby *tabby, wimp_w handle)
 {                              
    // get info about the window
                       
@@ -997,7 +1048,7 @@ void tabPane_addTab(wimp_w handle)
 
    wimp_i icon;
                                                       
-   icreatestr.w = tabPane_handle;                   
+   icreatestr.w = tabby->tabPane_handle;                   
                       
    icreatestr.i.flags  = (wimp_iconflags)
                        ( wimp_ITEXT
@@ -1011,7 +1062,7 @@ void tabPane_addTab(wimp_w handle)
    icreatestr.i.data.indirecttext.buffer      = label;
    icreatestr.i.data.indirecttext.validstring = strdup("R1"); 
    icreatestr.i.data.indirecttext.bufflen     = strlen(label);
-   icreatestr.i.box.x0 = tabs.n*TAB_WIDTH;
+   icreatestr.i.box.x0 = tabby->n*TAB_WIDTH;
    icreatestr.i.box.y0 = -52 -16;
    icreatestr.i.box.x1 = icreatestr.i.box.x0 + TAB_WIDTH;
    icreatestr.i.box.y1 = -16;
@@ -1036,15 +1087,15 @@ void tabPane_addTab(wimp_w handle)
 
    // record window handle and scroll bar positions
 
-   tabs.tab[tabs.n].handle = handle;
-   tabs.tab[tabs.n].scx    = info.info.scx;
-   tabs.tab[tabs.n].scy    = info.info.scy;
+   tabby->tab[tabby->n].handle = handle;
+   tabby->tab[tabby->n].scx    = info.info.scx;
+   tabby->tab[tabby->n].scy    = info.info.scy;
 
-   tabPane_selectTab(tabs.n++); 
+   tabPane_selectTab(tabby, tabby->n++); 
           
    // re-open the tab pane
 
-   gui_open(&gui_state.o);
+   gui_open(tabby, &tabby->gui_state.o);
 }                                                                                
 
 
@@ -1059,7 +1110,8 @@ void tabPane_addTab(wimp_w handle)
 
 Function    : gui_setState
 
-Parameters  : int - new state
+Parameters  : Tabby* - pointer to a !tabby gui instance
+              int    - new state
 
 Returns     : void
 
@@ -1068,11 +1120,11 @@ Description : Update the state of the !tabby GUI, including updating the
 
 *******************************************************************************/
                                                                                 
-void gui_setState(int newState)
+void gui_setState(Tabby *tabby, int newState)
 {
    wimp_icon info;
 
-   wimp_get_icon_info(gui_handle, 0, &info);
+   wimp_get_icon_info(tabby->gui_handle, 0, &info);
 
    char *valid = info.data.indirecttext.validstring;
 
@@ -1082,7 +1134,7 @@ void gui_setState(int newState)
       {         
          sprintf(valid, "R5;Sred_led,red_led");       
 
-         state = STATE_SEARCHING;
+         tabby->state = STATE_SEARCHING;
 
          break;
       }
@@ -1090,7 +1142,7 @@ void gui_setState(int newState)
       {                 
          sprintf(valid, "R5;Syellow_led,yellow_led");       
          
-         state = STATE_CAPTURING;
+         tabby->state = STATE_CAPTURING;
 
          break;
       }
@@ -1098,7 +1150,7 @@ void gui_setState(int newState)
       { 
          sprintf(valid, "R5;Sgreen_led,green_led");       
 
-         state = STATE_LOCKED;
+         tabby->state = STATE_LOCKED;
       }
    }                     
 
@@ -1106,7 +1158,7 @@ void gui_setState(int newState)
      
    wimp_redrawstr r;
 
-   r.w      = gui_handle;
+   r.w      = tabby->gui_handle;
    r.box.x0 = 0;
    r.box.y0 = -64;
    r.box.x1 = +64;
@@ -1119,7 +1171,8 @@ void gui_setState(int newState)
 
 Function    : gui_open
 
-Parameters  : wimp_openstr* - pointer to struct describing window parameters
+Parameters  : Tabby*        - pointer to a !tabby gui instance
+              wimp_openstr* - pointer to struct describing window parameters
 
 Returns     : void
 
@@ -1128,11 +1181,11 @@ Description : Open a !tabby window, and the associated tab pane, so that it is
 
 *******************************************************************************/
 
-void gui_open(wimp_openstr *openstr)
+void gui_open(Tabby *tabby, wimp_openstr *openstr)
 {                            
    // has the width of the gui changed? 
 
-   int oldWidth = gui_state.o.box.x1 - gui_state.o.box.x0;
+   int oldWidth = tabby->gui_state.o.box.x1 - tabby->gui_state.o.box.x0;
    int newWidth = openstr->box.x1    - openstr->box.x0;
 
    if (newWidth != oldWidth)
@@ -1146,11 +1199,11 @@ void gui_open(wimp_openstr *openstr)
       bbox.x1 = newWidth - 14;
       bbox.y1 = -20;
 
-      resizeIcon(gui_handle, 2, &bbox);
+      resizeIcon(tabby->gui_handle, 2, &bbox);
 
       wimp_redrawstr redrawstr;
 
-      redrawstr.w      = gui_handle;
+      redrawstr.w      = tabby->gui_handle;
       redrawstr.box.x0 = min(newWidth, oldWidth) - 40 - 14;
       redrawstr.box.y0 = -60;
       redrawstr.box.x1 = max(newWidth, oldWidth) - 14;
@@ -1161,52 +1214,52 @@ void gui_open(wimp_openstr *openstr)
 
    // open adjust size cover
 
-   if (active_handle != 0)
+   if (tabby->active_handle != 0)
    {
-      adjust_state.o.box.x0 = active_state.o.box.x1;   
-      adjust_state.o.box.y0 = active_state.o.box.y0 - 40;
-      adjust_state.o.box.x1 = active_state.o.box.x1 + 40;
-      adjust_state.o.box.y1 = active_state.o.box.y0; 
-      adjust_state.o.behind = openstr->behind;                 
+      tabby->adjust_state.o.box.x0 = tabby->active_state.o.box.x1;   
+      tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - 40;
+      tabby->adjust_state.o.box.x1 = tabby->active_state.o.box.x1 + 40;
+      tabby->adjust_state.o.box.y1 = tabby->active_state.o.box.y0; 
+      tabby->adjust_state.o.behind = openstr->behind;                 
 
-      tabPane_state.o.behind = adjust_handle;      
+      tabby->tabPane_state.o.behind = tabby->adjust_handle;      
    }                                      
    else
    {                       
-      adjust_state.o.behind = -3;                                    
+      tabby->adjust_state.o.behind = -3;                                    
 
-      tabPane_state.o.behind = openstr->behind;
+      tabby->tabPane_state.o.behind = openstr->behind;
    }
 
-   wimpt_noerr(wimp_open_wind(&adjust_state.o));
+   wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
 
    // open tab pane                       
          
-   tabPane_position(&openstr->box);
+   tabPane_position(tabby, &openstr->box);
 
-   wimpt_noerr(wimp_open_wind(&tabPane_state.o));
+   wimpt_noerr(wimp_open_wind(&tabby->tabPane_state.o));
                                         
    // open gui window
     
-   gui_state.o.behind = tabPane_handle;
+   tabby->gui_state.o.behind = tabby->tabPane_handle;
 
-   memcpy(&gui_state.o.box, &openstr->box, sizeof(wimp_box));
+   memcpy(&tabby->gui_state.o.box, &openstr->box, sizeof(wimp_box));
          
-   wimpt_noerr(wimp_open_wind(&gui_state.o));
+   wimpt_noerr(wimp_open_wind(&tabby->gui_state.o));
 
    // re-open active window beneath the gui window
 
-   if (active_handle != 0)
+   if (tabby->active_handle != 0)
    { 
-      int height = active_state.o.box.y1 - active_state.o.box.y0;
+      int height = tabby->active_state.o.box.y1 - tabby->active_state.o.box.y0;
             
-      active_state.o.box.x1 = gui_state.o.box.x1 - 40;
-      active_state.o.box.y1 = gui_state.o.box.y0 - 2;
-      active_state.o.box.x0 = gui_state.o.box.x0;
-      active_state.o.box.y0 = active_state.o.box.y1 - height;
-      active_state.o.behind = gui_handle;
+      tabby->active_state.o.box.x1 = tabby->gui_state.o.box.x1 - 40;
+      tabby->active_state.o.box.y1 = tabby->gui_state.o.box.y0 - 2;
+      tabby->active_state.o.box.x0 = tabby->gui_state.o.box.x0;
+      tabby->active_state.o.box.y0 = tabby->active_state.o.box.y1 - height;
+      tabby->active_state.o.behind = tabby->gui_handle;
 
-      sendOpenWindowRequest(active_handle, &active_state.o);
+      sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
    }
 }
 
@@ -1214,7 +1267,7 @@ void gui_open(wimp_openstr *openstr)
 
 Function    : gui_closeDown
         
-Parameters  : void
+Parameters  : Tabby* - pointer to a !tabby gui instance
 
 Returns     : void
 
@@ -1225,22 +1278,32 @@ To do       : Free memory allocated to this !tabby window.
 
 *******************************************************************************/
 
-void gui_closeDown(void)
-{                                                     
+void gui_closeDown(Tabby *tabby)
+{
+   // gui no longer needs to monitor the active window
+                                                     
+   alarm_removeall(tabby);
+
    // bring back all of the windows
      
-   for (int i = 0; i < tabs.n; i++)
+   for (int i = 0; i < tabby->n; i++)
    {
-      wimp_get_wind_state(tabs.tab[i].handle, &active_state); 
+      wimp_get_wind_state(tabby->tab[i].handle, &tabby->active_state); 
       
-      active_state.o.w      = tabs.tab[i].handle;
-      active_state.o.behind = -1;
-      active_state.o.w      = tabs.tab[i].handle;
-      active_state.o.x      = tabs.tab[i].scx;
-      active_state.o.y      = tabs.tab[i].scy;
+      tabby->active_state.o.w      = tabby->tab[i].handle;
+      tabby->active_state.o.behind = -1;
+      tabby->active_state.o.w      = tabby->tab[i].handle;
+      tabby->active_state.o.x      = tabby->tab[i].scx;
+      tabby->active_state.o.y      = tabby->tab[i].scy;
       
-      sendOpenWindowRequest(tabs.tab[i].handle, &active_state.o);
+      sendOpenWindowRequest(tabby->tab[i].handle, &tabby->active_state.o);
    }
+
+   // can dispose of all three windows   
+
+   wimpt_noerr(wimp_delete_wind(tabby->gui_handle));
+   wimpt_noerr(wimp_delete_wind(tabby->tabPane_handle));
+   wimpt_noerr(wimp_delete_wind(tabby->adjust_handle));
 }
    
 /*******************************************************************************
@@ -1248,7 +1311,7 @@ void gui_closeDown(void)
 Function    : gui_eventHandler
 
 Parameters  : wimp_eventstr* - pointer to struct describing the event
-              void*          - pointer to workspace (unused)
+              void*          - pointer to workspace (a !tabby gui instance)
 
 Returns     : void
 
@@ -1257,21 +1320,20 @@ Description : Main event handler for the !tabby window.
 *******************************************************************************/
 
 void gui_eventHandler(wimp_eventstr *e, void *handle)
-{
+{                                                       
+   Tabby *tabby = (Tabby*)handle;
+
    switch(e->e)
    {
       case wimp_EOPEN:   // maximise or minimise window 
       {
-         gui_open(&(e->data.o));
+         gui_open(tabby, &(e->data.o));
                                             
          break;
       }
       case wimp_ECLOSE:   // close window
       {
-         gui_closeDown();
-
-         wimpt_noerr(wimp_close_wind(e->data.o.w));
-         wimpt_noerr(wimp_close_wind(tabPane_handle));
+         instance_delete(tabby);
        
          break;
       }
@@ -1281,26 +1343,26 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
          {                                 
             case 0: // LED
             {                
-               if (state == STATE_LOCKED)
+               if (tabby->state == STATE_LOCKED)
                {
-                  gui_setState(STATE_SEARCHING);
+                  gui_setState(tabby, STATE_SEARCHING);
                }
                else
                {        
-                  gui_setState(STATE_LOCKED);
+                  gui_setState(tabby, STATE_LOCKED);
                }
 
                break;
             }
             case 1: // left scroll button
             {                
-               tabPane_scrollLeft();
+               tabPane_scrollLeft(tabby);
 
                break;
             }
             case 2: // LED
             {                
-               tabPane_scrollRight();
+               tabPane_scrollRight(tabby);
 
                break;
             }
@@ -1324,7 +1386,8 @@ Description :
 *******************************************************************************/
  
 void adjust_eventHandler(wimp_eventstr *e, void *handle)
-{                                                                                                   
+{                                                                                   Tabby *tabby = (Tabby*)handle;
+                   
    static int x, y;   // drag offsets 
 
    switch(e->e)                                 
@@ -1339,14 +1402,14 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
 
          wimp_get_point_info(&mousestr);
            
-         memcpy(&openstr, &gui_state.o, sizeof(wimp_openstr));
+         memcpy(&openstr, &tabby->gui_state.o, sizeof(wimp_openstr));
 
-         active_state.o.box.x1 = mousestr.x + x;
-         active_state.o.box.y0 = mousestr.y + y + 40;
-         openstr.box.x1        = active_state.o.box.x1 + 40;
-         openstr.behind        = -1;
+         tabby->active_state.o.box.x1 = mousestr.x + x;
+         tabby->active_state.o.box.y0 = mousestr.y + y + 40;
+         openstr.box.x1               = tabby->active_state.o.box.x1 + 40;
+         openstr.behind               = -1;
 
-         gui_open(&openstr);    
+         gui_open(tabby, &openstr);    
 
          break;
       }
@@ -1358,10 +1421,10 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
       }
       case wimp_ECLOSE:   // close window
       {
-         gui_closeDown();
+         gui_closeDown(tabby);
 
          wimpt_noerr(wimp_close_wind(e->data.o.w));
-         wimpt_noerr(wimp_close_wind(tabPane_handle));
+         wimpt_noerr(wimp_close_wind(tabby->tabPane_handle));
        
          break;
       }                                          
@@ -1371,41 +1434,41 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
          {                          
             // update the state of the active window 
 
-            wimp_get_wind_state(active_handle, &active_state); 
+            wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
 
             // update the window information
                    
-            active_winfo.w = active_handle;
+            tabby->active_winfo.w = tabby->active_handle;
 
-            wimpt_complain(wimp_get_wind_info(&active_winfo));
+            wimpt_complain(wimp_get_wind_info(&tabby->active_winfo));
 
             // initiate drag operation
 
             wimp_dragstr dragstr;
 
-            x = adjust_state.o.box.x0 - e->data.but.m.x;
-            y = adjust_state.o.box.y0 - e->data.but.m.y;
+            x = tabby->adjust_state.o.box.x0 - e->data.but.m.x;
+            y = tabby->adjust_state.o.box.y0 - e->data.but.m.y;
 
             wimp_box parent;
 
-            parent.x0 = active_state.o.box.x0 
-                      + max(420, (active_winfo.info.minsize >> 16));  
-            parent.y0 = active_state.o.box.y1
-                      - active_winfo.info.ex.y1
-                      + active_winfo.info.ex.y0
+            parent.x0 = tabby->active_state.o.box.x0 
+                      + max(420, (tabby->active_winfo.info.minsize >> 16));  
+            parent.y0 = tabby->active_state.o.box.y1
+                      - tabby->active_winfo.info.ex.y1
+                      + tabby->active_winfo.info.ex.y0
                       - 40 + 2;
-            parent.x1 = active_state.o.box.x0 
-                      + active_winfo.info.ex.x1
-                      - active_winfo.info.ex.x0
+            parent.x1 = tabby->active_state.o.box.x0 
+                      + tabby->active_winfo.info.ex.x1
+                      - tabby->active_winfo.info.ex.x0
                       + 40;
-            parent.y1 = active_state.o.box.y1 
-                      - max(124, active_winfo.info.minsize & 0xFFFF);
+            parent.y1 = tabby->active_state.o.box.y1 
+                      - max(124, tabby->active_winfo.info.minsize & 0xFFFF);
 
-            dragstr.window    = adjust_handle;
-            dragstr.box.x0    = adjust_state.o.box.x0;
-            dragstr.box.y0    = adjust_state.o.box.y0;
-            dragstr.box.x1    = adjust_state.o.box.x1;
-            dragstr.box.y1    = adjust_state.o.box.y1;
+            dragstr.window    = tabby->adjust_handle;
+            dragstr.box.x0    = tabby->adjust_state.o.box.x0;
+            dragstr.box.y0    = tabby->adjust_state.o.box.y0;
+            dragstr.box.x1    = tabby->adjust_state.o.box.x1;
+            dragstr.box.y1    = tabby->adjust_state.o.box.y1;
             dragstr.parent.x0 = parent.x0;
             dragstr.parent.y0 = parent.y0;
             dragstr.parent.x1 = parent.x1;
@@ -1414,7 +1477,7 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
 
             wimp_drag_box(&dragstr);
 
-            win_claim_idle_events(adjust_handle);
+            win_claim_idle_events(tabby->adjust_handle);
          }
 
          break;
@@ -1423,14 +1486,16 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
 }
 
 BOOL adjust_unknownEventProcessor(wimp_eventstr *e, void *handle)
-{      
+{                                        
+   Tabby *tabby = (Tabby*)handle;
+
    switch(e->e)
    {                                      
       case wimp_EUSERDRAG:
       {
          // drag operation finished, so null events no longer required
 
-         win_claim_idle_events(adjust_handle-1);
+         win_claim_idle_events(tabby->adjust_handle-1);
 
          return TRUE;
       }
@@ -1445,33 +1510,37 @@ Function    : gui_create
 
 Parameters  : void
 
-Returns     : void
+Returns     : Tabby* - pointer to a new !tabby gui instance
 
 Description : Create a new !tabby tab bar windowl.
 
 *******************************************************************************/
            
-void gui_create(void)
-{                        
-   // create the main gui
+Tabby* gui_create(void)
+{                                       
+   Tabby *tabby = (Tabby*)malloc(sizeof(Tabby));
 
-   wimp_wind *window = template_syshandle("Window");
+   // create the main gui               
+
+   template *template = template_copy(template_find("Window"));
+
+   wimp_wind *window = &template->window;
 
    if (window == 0)
    {
       exit(EXIT_FAILURE);
    }
 
-   if (wimpt_complain(wimp_create_wind(window, &gui_handle)) != 0)
+   if (wimpt_complain(wimp_create_wind(window, &tabby->gui_handle)) != 0)
    {
       exit(EXIT_FAILURE);
    }
 
-   win_register_event_handler(gui_handle, gui_eventHandler, 0);
+   win_register_event_handler(tabby->gui_handle, gui_eventHandler, tabby);
 
    // create the tab pane
                                        
-   tabPane_create();
+   tabPane_create(tabby);
    
    // create the adjust window
          
@@ -1484,34 +1553,40 @@ void gui_create(void)
 
    window->colours[0] = 0xFF;
 
-   if (wimpt_complain(wimp_create_wind(window, &adjust_handle)) != 0)
+   if (wimpt_complain(wimp_create_wind(window, &tabby->adjust_handle)) != 0)
    {
       exit(EXIT_FAILURE);
    }
 
-   win_register_event_handler(adjust_handle, adjust_eventHandler, 0);
+   win_register_event_handler(tabby->adjust_handle, 
+      adjust_eventHandler, tabby);
 
-   win_add_unknown_event_processor(adjust_unknownEventProcessor, 0);
+   win_add_unknown_event_processor(adjust_unknownEventProcessor, tabby);
 
    // get initial window states
 
-   wimp_get_wind_state(gui_handle, &gui_state);
-   wimp_get_wind_state(adjust_handle, &adjust_state); 
-   wimp_get_wind_state(tabPane_handle, &tabPane_state);
+   wimp_get_wind_state(tabby->gui_handle,     &tabby->gui_state);
+   wimp_get_wind_state(tabby->adjust_handle,  &tabby->adjust_state); 
+   wimp_get_wind_state(tabby->tabPane_handle, &tabby->tabPane_state);
                          
    // get pointer to gui title icon buffer
                       
    wimp_winfo winfo;
 
-   winfo.w = gui_handle;
+   winfo.w = tabby->gui_handle;
        
    wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
    
-   gui_title = winfo.info.title.indirecttext.buffer;
+   tabby->gui_title = winfo.info.title.indirecttext.buffer;
      
    // gui initially empty
 
-   gui_setState(STATE_LOCKED);
+   gui_setState(tabby, STATE_LOCKED);
+
+   tabby->active        = -1;
+   tabby->active_handle = 0;
+
+   return tabby;
 }
                                            
 /*******************************************************************************
@@ -1519,7 +1594,7 @@ void gui_create(void)
 Function    : gui_monitor
 
 Parameters  : int   - current time
-              void* - pointer to workspace
+              void* - pointer to workspace (a !tabby gui instance)
 
 Returns     : void
 
@@ -1536,98 +1611,114 @@ Description : Callback called by the alarm to repidly monitor the active
 *******************************************************************************/
 
 void gui_monitor(int time, void *handle)
-{   
+{                      
+   Tabby *tabby = (Tabby*)handle;
+
    int delay = 10;
 
    static wimp_w window = 0;
               
-   if (state == STATE_SEARCHING)
+   if (tabby->state == STATE_SEARCHING)
    {           
       // seek window to capture by iterating through the window stack
                          
-      if (!wimp_get_wind_state(gui_handle, &gui_state))
+      if (!wimp_get_wind_state(tabby->gui_handle, &tabby->gui_state))
       { 
          wimp_wstate wstate;
                                         
-         wstate.o.behind = gui_state.o.behind;
+         wstate.o.behind = tabby->gui_state.o.behind;
 
          while (wstate.o.behind != -1)         
          { 
             window = wstate.o.behind;
 
             wimp_get_wind_state(window, &wstate);                                            
-            if (window != tabPane_handle)
+            if (window != tabby->tabPane_handle)
             {
-               if (intersects(&gui_state.o.box, &wstate.o.box))
+               if (intersects(&tabby->gui_state.o.box, &wstate.o.box))
                {
-                  delay = 100;        
+                  // to do: refactor this inefficient expression 
+
+                  if (identifyOwner(window) != findTask("Tabby"))
+                  {
+                     delay = 100;        
                
-                  gui_setState(STATE_CAPTURING);
+                     gui_setState(tabby, STATE_CAPTURING);
+                  }
+                  else
+                  {           
+                     // do not allow capture of another !tabby instance
+
+                     delay = 10;        
+               
+                     gui_setState(tabby, STATE_LOCKED);
+                  }
 
                   break;
+               
                }
             }
          }
       }
    }
-   else if (state == STATE_CAPTURING)
+   else if (tabby->state == STATE_CAPTURING)
    {
       // re-open captured window beneath the tab bar
                      
-      if (active_handle == 0)
+      if (tabby->active_handle == 0)
       {
-         wimp_get_wind_state(window, &active_state); 
+         wimp_get_wind_state(window, &tabby->active_state); 
       
-         int height = active_state.o.box.y1 - active_state.o.box.y0;
+         int height = tabby->active_state.o.box.y1-tabby->active_state.o.box.y0;
 
-         active_state.o.box.x0 = gui_state.o.box.x0;
-         active_state.o.box.y0 = gui_state.o.box.y1 - height;
-         active_state.o.box.x1 = gui_state.o.box.x1 - 40;
-         active_state.o.box.y1 = gui_state.o.box.y0 - 2;
-         active_state.o.w      = window;
-         active_state.o.behind = adjust_handle;
+         tabby->active_state.o.box.x0 = tabby->gui_state.o.box.x0;
+         tabby->active_state.o.box.y0 = tabby->gui_state.o.box.y1 - height;
+         tabby->active_state.o.box.x1 = tabby->gui_state.o.box.x1 - 40;
+         tabby->active_state.o.box.y1 = tabby->gui_state.o.box.y0 - 2;
+         tabby->active_state.o.w      = window;
+         tabby->active_state.o.behind = tabby->adjust_handle;
 
          // re-open adjust button over the adjust size icon of the active window
       
-         adjust_state.o.box.x0 = active_state.o.box.x1;
-         adjust_state.o.box.y0 = active_state.o.box.y0 - 40;  
-         adjust_state.o.box.x1 = adjust_state.o.box.x0 + 40;
-         adjust_state.o.box.y1 = adjust_state.o.box.y0 + 40;
-         adjust_state.o.behind = -1;  
+         tabby->adjust_state.o.box.x0 = tabby->active_state.o.box.x1;
+         tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - 40;  
+         tabby->adjust_state.o.box.x1 = tabby->adjust_state.o.box.x0 + 40;
+         tabby->adjust_state.o.box.y1 = tabby->adjust_state.o.box.y0 + 40;
+         tabby->adjust_state.o.behind = -1;  
 
-         wimpt_noerr(wimp_open_wind(&adjust_state.o));
+         wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
    
-         sendOpenWindowRequest(active_handle, &active_state.o);      
+         sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
       }
 
-      tabPane_addTab(window);      
+      tabPane_addTab(tabby, window);      
                                                         
-      gui_setState(STATE_LOCKED);
+      gui_setState(tabby, STATE_LOCKED);
    }
-   else if (active_handle != 0)
+   else if (tabby->active_handle != 0)
    {
       // has the active window changed size unexpectedly?                                                              
       wimp_wstate wstate;
 
-      memcpy(&wstate, &active_state, sizeof(active_state));
+      memcpy(&wstate, &tabby->active_state, sizeof(wimp_wstate));
 
-      wimp_get_wind_state(active_handle, &active_state); 
+      wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
 
-      if (different(&wstate.o.box, &active_state.o.box)) 
+      if (different(&wstate.o.box, &tabby->active_state.o.box)) 
       {
-         wstate.o.box.x0 = active_state.o.box.x0;
-         wstate.o.box.y0 = active_state.o.box.y1 + 2;
-         wstate.o.box.x1 = active_state.o.box.x1 + 40;
-         wstate.o.box.y1 = active_state.o.box.y1 + 66;
+         wstate.o.box.x0 = tabby->active_state.o.box.x0;
+         wstate.o.box.y0 = tabby->active_state.o.box.y1 + 2;
+         wstate.o.box.x1 = tabby->active_state.o.box.x1 + 40;
+         wstate.o.box.y1 = tabby->active_state.o.box.y1 + 66;
 
-         gui_open(&wstate.o);
+         gui_open(tabby, &wstate.o);
       }
 
       // has the window title changed? 
                       
       wimp_winfo winfo;
 
-      winfo.w = active_handle;
+      winfo.w = tabby->active_handle;
        
       wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
 
@@ -1635,38 +1726,38 @@ void gui_monitor(int time, void *handle)
       {                                                                  
          char buffer[512];
  
-         wimpt_complain(wimp_transferblock(active_task,
+         wimpt_complain(wimp_transferblock(tabby->active_task,
                         winfo.info.title.indirecttext.buffer,
                         wimpt_task(),
                         buffer,
                         winfo.info.title.indirecttext.bufflen));
 
-         if (strncmp(gui_title, buffer, 255))
+         if (strncmp(tabby->gui_title, buffer, 255))
          {
-            strncpy(gui_title, buffer, 256);
+            strncpy(tabby->gui_title, buffer, 256);
 
-            gui_title[255] = '\0';
+            tabby->gui_title[255] = '\0';
 
-            forceTitleBarRedraw(gui_handle);
+            forceTitleBarRedraw(tabby->gui_handle);
          }
       }   
 
       // is the active window above the main gui in the stack?
 
-      if (!wimp_get_wind_state(gui_handle, &gui_state))
+      if (!wimp_get_wind_state(tabby->gui_handle, &tabby->gui_state))
       { 
          wimp_wstate wstate;
                                         
-         wstate.o.behind = gui_state.o.behind;
+         wstate.o.behind = tabby->gui_state.o.behind;
 
          while (wstate.o.behind != -1)         
          { 
             window = wstate.o.behind;
 
-            if (window == active_handle)
+            if (window == tabby->active_handle)
             {
-               wimp_get_wind_state(window, &active_state);                                               
-               gui_open(&gui_state.o);
+               wimp_get_wind_state(window, &tabby->active_state);                                               
+               gui_open(tabby, &tabby->gui_state.o);
 
                break;
             }
@@ -1684,7 +1775,7 @@ void gui_monitor(int time, void *handle)
       delay = 10;
    }
 
-   alarm_set(alarm_timenow() + delay, gui_monitor, NULL);
+   alarm_set(alarm_timenow() + delay, gui_monitor, tabby);
 }
 
 
@@ -1762,7 +1853,10 @@ static void imenuproc(void *handle, char *hit)
       }
       case IMENU_QUIT:
       {
-         gui_closeDown();
+         for (Tabby *tabby = instances; tabby != NULL; tabby = tabby->next)
+         {
+            gui_closeDown(tabby);
+         }
 
          exit(EXIT_SUCCESS);
 
@@ -1786,7 +1880,16 @@ Description : Callback called whenever the left mouse button is clicked on
 *******************************************************************************/
 
 static void icon_left_click(wimp_i icon)
-{
+{                                                      
+   Tabby *tabby = instance_new();
+
+   tabby->gui_state.o.behind = -1;
+
+   gui_open(tabby, &tabby->gui_state.o);
+
+   // start monitoring 
+
+   alarm_set(alarm_timenow() + 10, gui_monitor, tabby);
 }
 
 
@@ -1818,6 +1921,8 @@ int main(void)
 
    dbox_init();     
 
+   alarm_init();
+
    baricon("!tabby", (int)resspr_area(), icon_left_click);
 
    imenu = menu_new(APP_NAME, MENU_ITEMS);
@@ -1841,18 +1946,6 @@ int main(void)
 
    LOG("main", "Hello from %s", "Tabby");
 
-   // open main window
-
-   gui_create();
-
-   gui_state.o.behind = -1;
-   gui_open(&gui_state.o);
-
-   // start monitoring windows
-
-   alarm_init();
-
-   alarm_set(alarm_timenow() + 100, gui_monitor, NULL);
 
    // main even processing loop
 
