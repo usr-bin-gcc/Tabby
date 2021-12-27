@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 25th December 2021
+Date        : Monday 27th December 2021
 
 Author      : Gavin Cawley
 
@@ -57,6 +57,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   don't happen.  Maintains a list of active
                                   instances, so that all captured windows can
                                   be released when the task exits.
+              26/12/2021 v0.9.1 - Adjust size intercept window now has an
+                                  sicon/psicon sprite icon.
+              27/12/2021 v0.9.2 - Hopefully now closes down correctly.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -75,12 +78,16 @@ To do       : (a) Allow tabs to be rearranged by dragging.
                   effect of dragging to the bottom and right edges of the
                   screen.
 
-              (f) The colour of the active tab should indicate whethe the
+              (f) The colour of the active tab should indicate whether the
                   active window has the input focus (the title bar of the
                   !tabby window cannot do this as it is managed by the wimp).
 
-              (g) The adjust window should have the adjust size icon, rather
-                  than a beige background, but that is useful while debugging.
+              (g) The adjust window should have the sicon/psicon sprite from
+                  system sprites so that it is consistent with the wimp theme.
+
+              (h) Add a toggle size icon.
+
+              (i) Support for older low-res screen modes.
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -1386,8 +1393,9 @@ Description :
 *******************************************************************************/
  
 void adjust_eventHandler(wimp_eventstr *e, void *handle)
-{                                                                                   Tabby *tabby = (Tabby*)handle;
-                   
+{                                                                                   
+   Tabby *tabby = (Tabby*)handle;
+            
    static int x, y;   // drag offsets 
 
    switch(e->e)                                 
@@ -1456,13 +1464,14 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             parent.y0 = tabby->active_state.o.box.y1
                       - tabby->active_winfo.info.ex.y1
                       + tabby->active_winfo.info.ex.y0
-                      - 40 + 2;
+                      - 40 - y + 4;
             parent.x1 = tabby->active_state.o.box.x0 
                       + tabby->active_winfo.info.ex.x1
                       - tabby->active_winfo.info.ex.x0
-                      + 40;
+                      - x;
             parent.y1 = tabby->active_state.o.box.y1 
-                      - max(124, tabby->active_winfo.info.minsize & 0xFFFF);
+                      - max(124, tabby->active_winfo.info.minsize & 0xFFFF)
+                      + y;
 
             dragstr.window    = tabby->adjust_handle;
             dragstr.box.x0    = tabby->adjust_state.o.box.x0;
@@ -1473,7 +1482,7 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             dragstr.parent.y0 = parent.y0;
             dragstr.parent.x1 = parent.x1;
             dragstr.parent.y1 = parent.y1;
-            dragstr.type      = wimp_USER_FIXED;
+            dragstr.type      = wimp_USER_HIDDEN;
 
             wimp_drag_box(&dragstr);
 
@@ -1858,7 +1867,7 @@ static void imenuproc(void *handle, char *hit)
             gui_closeDown(tabby);
          }
 
-         exit(EXIT_SUCCESS);
+         wimp_closedown();
 
          break;
       }
@@ -1892,6 +1901,55 @@ static void icon_left_click(wimp_i icon)
    alarm_set(alarm_timenow() + 10, gui_monitor, tabby);
 }
 
+/*******************************************************************************
+
+Function    : messageEventProcessor
+
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace (currently unused)
+
+Returns     : BOOL - TRUE if event fully handled, FALSE otherwise.
+
+Description : Task-level event processor.  In this case it responds to user
+              wimp messages sent by other tasks.
+
+*******************************************************************************/
+
+BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
+{
+   switch (e->e)
+   {
+      case wimp_ESEND: 
+      case wimp_ESENDWANTACK:
+      {
+         switch (e->data.msg.hdr.action)
+         {
+            case wimp_MPREQUIT:
+            {        
+               // make sure all captured windows released before !tabby quits
+
+               for (Tabby *t = instances; t != NULL; t = t->next)
+               {
+                  gui_closeDown(t);
+               }
+
+               return TRUE;
+            }
+            case wimp_MCLOSEDOWN:
+            {        
+               wimp_closedown();
+
+               return TRUE;
+            }
+         }
+
+         return FALSE;
+      }
+   }
+
+   return FALSE;
+}
+
 
 /*******************************************************************************
 *                                                                              * 
@@ -1909,8 +1967,6 @@ int main(void)
                              wimp_EMSCROLL      |
                              wimp_EMLOSECARET   |
                              wimp_EMGAINCARET   |
-                             wimp_EMSEND        |
-                             wimp_EMSENDWANTACK |
                              wimp_EMACK));          
        
    wimpt_init(APP_NAME);
@@ -1946,6 +2002,7 @@ int main(void)
 
    LOG("main", "Hello from %s", "Tabby");
 
+   win_add_unknown_event_processor(messageEventProcessor, NULL);
 
    // main even processing loop
 
