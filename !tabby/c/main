@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Monday 27th December 2021
+Date        : Tuesday 28th December 2021
 
 Author      : Gavin Cawley
 
@@ -60,6 +60,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
               26/12/2021 v0.9.1 - Adjust size intercept window now has an
                                   sicon/psicon sprite icon.
               27/12/2021 v0.9.2 - Hopefully now closes down correctly.
+              28/12/2021 v0.9.3 - Prevented from capturing a pane (e.g. a
+                                  !draw tool pane) or another !tabby instance
+                                  (including it's active window).
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -80,7 +83,7 @@ To do       : (a) Allow tabs to be rearranged by dragging.
 
               (f) The colour of the active tab should indicate whether the
                   active window has the input focus (the title bar of the
-                  !tabby window cannot do this as it is managed by the wimp).
+                  !tabby window cannot do this as it is managed by the wimp)?
 
               (g) The adjust window should have the sicon/psicon sprite from
                   system sprites so that it is consistent with the wimp theme.
@@ -88,6 +91,7 @@ To do       : (a) Allow tabs to be rearranged by dragging.
               (h) Add a toggle size icon.
 
               (i) Support for older low-res screen modes.
+
 
 Acks        : Many thanks to Stuart Swales for his help and advice.
 
@@ -1597,6 +1601,42 @@ Tabby* gui_create(void)
 
    return tabby;
 }
+
+/*******************************************************************************
+
+Function    : gui_isCapturable
+
+Parameters  : wimp_wstate - pointer to a window state struct
+
+Returns     : void
+
+Description : Function to determine whether a window is eligible to be captured
+              by a !tabby instance.  Another !tabby instance is not capturable,
+              nor is the tabPane or adjust window of this !tabby instance.#
+              Only the active window of a !tabby instance can be above the
+              gui window in the window stack, so we don't need to check any
+              inactive windows captured by any !tabby instance.  We also don't
+              want to capture panes, but only the main window of an app (e.g.
+              we want to capture a !draw drawing, rather than the tool pane).
+
+*******************************************************************************/
+
+BOOL gui_isCapturable(wimp_wstate *wstate)
+{  
+   // don't capture a !tabby instance or it's active window
+
+   for (Tabby *t = instances; t != NULL; t = t->next)
+   {           
+      if (wstate->o.w == t->gui_handle)     return FALSE;
+      if (wstate->o.w == t->tabPane_handle) return FALSE;
+      if (wstate->o.w == t->adjust_handle)  return FALSE;
+      if (wstate->o.w == t->active_handle)  return FALSE;
+   }
+
+   // don't capture a pane window
+
+   return !(wstate->flags & wimp_WPANE);
+}
                                            
 /*******************************************************************************
 
@@ -1642,29 +1682,15 @@ void gui_monitor(int time, void *handle)
             window = wstate.o.behind;
 
             wimp_get_wind_state(window, &wstate);                                            
-            if (window != tabby->tabPane_handle)
+            if (intersects(&tabby->gui_state.o.box, &wstate.o.box))
             {
-               if (intersects(&tabby->gui_state.o.box, &wstate.o.box))
+               if (gui_isCapturable(&wstate))
                {
-                  // to do: refactor this inefficient expression 
-
-                  if (identifyOwner(window) != findTask("Tabby"))
-                  {
-                     delay = 100;        
+                  delay = 100;        
                
-                     gui_setState(tabby, STATE_CAPTURING);
-                  }
-                  else
-                  {           
-                     // do not allow capture of another !tabby instance
-
-                     delay = 10;        
-               
-                     gui_setState(tabby, STATE_LOCKED);
-                  }
+                  gui_setState(tabby, STATE_CAPTURING);
 
                   break;
-               
                }
             }
          }
