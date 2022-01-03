@@ -195,6 +195,8 @@ Tabby* gui_create(void);
 
 Tabby *instances = NULL;
 
+wimp_t filer_task;
+
 /*******************************************************************************
 *                                                                              * 
 *                           Misc. Support Functions                            * 
@@ -470,6 +472,70 @@ BOOL different(wimp_box *x, wimp_box *y)
            (x->y1 != y->y1));
 } 
 
+/*******************************************************************************
+
+Function    : isTerminated
+
+Parameters  : char* - pointer to window information struct
+              int   - length of buffer
+
+Returns     : BOOL - TRUE if buffer is null-terminated string, otherwise FALSE
+
+Description : Determine whether the string contained in a buffer is null 
+              terminated.
+
+*******************************************************************************/ 
+
+BOOL isTerminated(char *buffer, int bufflen)
+{               
+   for (int i = 0; i < bufflen; i++)
+   {
+      if (buffer[i] == '\0')
+      {
+         return TRUE;
+      }
+   }
+
+   return FALSE;
+}                                                    
+
+/*******************************************************************************
+
+Function    : getWindowTitle
+
+Parameters  : wimp_winfo* - pointer to window information struct
+              wimp_t      - task handle of the window owner
+              char*       - pointer to buffer 
+              int         - length of buffer
+
+Returns     : void
+
+Description :
+
+*******************************************************************************/
+
+void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
+{                                       
+   char *src =  info->info.title.indirecttext.buffer;
+
+   int srclen = info->info.title.indirecttext.bufflen;
+                         
+   wimp_t task = wimpt_task();
+
+   // transfer the title into the buffer                       
+
+   for (int n = min(srclen, bufflen); n <= bufflen; n++)
+   {
+      wimpt_complain(wimp_transferblock(owner, src, task, buffer, n));
+
+      if (isTerminated(buffer, n))
+      {
+         break;
+      }
+   }
+
+   buffer[bufflen-1] = '\0';  
+}
 
 /*******************************************************************************
 *                                                                              * 
@@ -787,6 +853,28 @@ void tabPane_selectTab(Tabby *tabby, int tab)
       wimp_set_icon_state(tabby->tabPane_handle, 2*tab, 
          (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
          (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
+  
+      // change the title of the gui window
+
+      tabby->active_winfo.w = tabby->active_handle;
+       
+      wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + 
+         (char*)&tabby->active_winfo)));
+
+      if (tabby->active_winfo.info.titleflags & wimp_INDIRECT)
+      {    
+         wimp_t owner = identifyOwner(tabby->active_handle);
+             
+         getWindowTitle(&tabby->active_winfo, owner, tabby->gui_title, 256);
+      }
+      else
+      {
+         tabby->gui_title[0] = '\0';
+
+         strncat(tabby->gui_title, tabby->active_winfo.info.title.text, 12);
+      }
+
+      forceTitleBarRedraw(tabby->gui_handle);
 
       // re-open adjust window
        
@@ -811,6 +899,8 @@ void tabPane_selectTab(Tabby *tabby, int tab)
    r.box.y1 = tabby->tabPane_state.o.box.y1;
 
    wimp_force_redraw(&r);     
+
+   gui_open(tabby, &tabby->gui_state.o);
 }
 
 /*******************************************************************************
@@ -1037,20 +1127,11 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
    wimp_t task = identifyOwner(handle);
 
-   LOG("tabPane_addTab", "handle = %d", task);
-
    if (info.info.titleflags & wimp_INDIRECT)
    {                                                                  
       char buffer[512];
 
-      wimpt_complain(wimp_transferblock(task,
-                         info.info.title.indirecttext.buffer,
-                         wimpt_task(),
-                         buffer,
-                         info.info.title.indirecttext.bufflen));
-
-      LOG("tabPane_addTab", "bufflen = %d : buffer = '%s'", 
-         info.info.title.indirecttext.bufflen, buffer);
+      getWindowTitle(&info, task, buffer, 512);
 
       label = tabPane_extractLabel(buffer);
    }  
@@ -1238,12 +1319,15 @@ void gui_open(Tabby *tabby, wimp_openstr *openstr)
 
    // open adjust size cover
 
-   if (tabby->active_handle != 0)
-   {
+   if ((tabby->active_handle != 0) &&
+       (tabby->active_winfo.info.flags & wimp_WSIZE))
+   {                                                       
+      int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
+      
       tabby->adjust_state.o.box.x0 = tabby->active_state.o.box.x1;   
-      tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - 40;
+      tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - yoff;
       tabby->adjust_state.o.box.x1 = tabby->active_state.o.box.x1 + 40;
-      tabby->adjust_state.o.box.y1 = tabby->active_state.o.box.y0; 
+      tabby->adjust_state.o.box.y1 = tabby->adjust_state.o.box.y0 + 40; 
       tabby->adjust_state.o.behind = openstr->behind;                 
 
       tabby->tabPane_state.o.behind = tabby->adjust_handle;      
@@ -1410,7 +1494,7 @@ Description :
 *******************************************************************************/
  
 void adjust_eventHandler(wimp_eventstr *e, void *handle)
-{                                                                                   
+{                                                                                
    Tabby *tabby = (Tabby*)handle;
             
    static int x, y;   // drag offsets 
@@ -1428,9 +1512,11 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
          wimp_get_point_info(&mousestr);
            
          memcpy(&openstr, &tabby->gui_state.o, sizeof(wimp_openstr));
+                                                 
+         int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
 
          tabby->active_state.o.box.x1 = mousestr.x + x;
-         tabby->active_state.o.box.y0 = mousestr.y + y + 40;
+         tabby->active_state.o.box.y0 = mousestr.y + y + yoff;
          openstr.box.x1               = tabby->active_state.o.box.x1 + 40;
          openstr.behind               = -1;
 
@@ -1474,6 +1560,8 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             x = tabby->adjust_state.o.box.x0 - e->data.but.m.x;
             y = tabby->adjust_state.o.box.y0 - e->data.but.m.y;
 
+            int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
+
             wimp_box parent;
 
             parent.x0 = tabby->active_state.o.box.x0 
@@ -1481,7 +1569,7 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             parent.y0 = tabby->active_state.o.box.y1
                       - tabby->active_winfo.info.ex.y1
                       + tabby->active_winfo.info.ex.y0
-                      - 40 - y + 4;
+                      - yoff - y + 4;
             parent.x1 = tabby->active_state.o.box.x0 
                       + tabby->active_winfo.info.ex.x1
                       - tabby->active_winfo.info.ex.x0
@@ -1784,29 +1872,30 @@ void gui_monitor(int time, void *handle)
 
       // has the window title changed? 
                       
-      wimp_winfo winfo;
+      if (tabby->active_task != filer_task)
+      {
+         wimp_winfo winfo;
 
-      winfo.w = tabby->active_handle;
+         winfo.w = tabby->active_handle;
        
-      wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
+         wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
 
-      if (winfo.info.titleflags & wimp_INDIRECT)
-      {                                                                  
-         char buffer[512];
- 
-         wimpt_complain(wimp_transferblock(identifyOwner(tabby->active_handle),
-                        winfo.info.title.indirecttext.buffer,
-                        wimpt_task(),
-                        buffer,
-                        winfo.info.title.indirecttext.bufflen));
+         if (winfo.info.titleflags & wimp_INDIRECT)
+         {                                                                  
+            char buffer[512];
+                    
+            wimp_t owner = identifyOwner(tabby->active_handle);
+             
+            getWindowTitle(&winfo, owner, buffer, 512);
 
-         if (strncmp(tabby->gui_title, buffer, 255))
-         {
-            strncpy(tabby->gui_title, buffer, 256);
+            if (strncmp(tabby->gui_title, buffer, 255))
+            {
+               strncpy(tabby->gui_title, buffer, 256);
 
-            tabby->gui_title[255] = '\0';
+               tabby->gui_title[255] = '\0';
 
-            forceTitleBarRedraw(tabby->gui_handle);
+               forceTitleBarRedraw(tabby->gui_handle);
+            }
          }
       }   
 
@@ -2062,6 +2151,10 @@ int main(void)
    LOG("main", "Hello from %s", "Tabby");
 
    win_add_unknown_event_processor(messageEventProcessor, NULL);
+                                                          
+   filer_task = findTask("Filer");
+
+   LOG("main", "Filer task id = %d", filer_task);
 
    // main even processing loop
 
