@@ -2294,7 +2294,9 @@ int main(void)
        
    wimpt_init(APP_NAME);
 
-   res_init(APP_NAME);   
+   res_init(APP_NAME);
+
+   resspr_init();
 
    template_init();              
 
@@ -2302,7 +2304,7 @@ int main(void)
 
    alarm_init();
 
-   baricon("!tabby", (int)resspr_area(), icon_left_click);
+   baricon("!tabby", (int)wimp_spritearea, icon_left_click);
 
    imenu = menu_new(APP_NAME, MENU_ITEMS);
                     
