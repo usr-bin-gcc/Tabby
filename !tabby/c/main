@@ -65,6 +65,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   (including it's active window).
               31/12/2021 v0.9.4 - Fixed minor bug in adjusting the size of the
                                   active window relating to the minimum size.
+              08/01/2022 v0.9.5 - Now more robust against captured windows 
+                                  being deleted (or the task owning the window
+                                  closing down).
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -187,15 +190,21 @@ typedef struct TabbyStr
 }
 Tabby;                 
 
+Tabby *instances = NULL;
+
+wimp_t filer_task;     
+
+
+// forward declarations of functions (To do - refactor away if feasible)
+
 void gui_open(Tabby *tabby, wimp_openstr* openstr);
 
 void gui_closeDown(Tabby *tabby);
 
 Tabby* gui_create(void);
 
-Tabby *instances = NULL;
-
-wimp_t filer_task;
+void tabPane_deleteTab(Tabby *instance, int tab);
+                                                                        
 
 /*******************************************************************************
 *                                                                              * 
@@ -272,31 +281,6 @@ char *strdup(const char *s)
 
 #endif
 
-/*******************************************************************************
-
-Function    : sendOpenWindowMessage
-
-Parameters  : wimp_w        - window handle
-              wimp_openstr* - pointer to window parameter structure
-
-Returns     : void
-
-Description : Send an Open_Window_Request message to the specified window.
-
-*******************************************************************************/
-                        
-#define Wimp_SendMessage 0x400E7
-       
-void sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
-{
-   os_regset regs;
-
-   regs.r[0] = (int)wimp_EOPEN;
-   regs.r[1] = (int)openstr;
-   regs.r[2] = (int)handle;
-
-   wimpt_complain(os_swix(Wimp_SendMessage, &regs));
-}
 
 /*******************************************************************************
 
@@ -354,6 +338,8 @@ Description : Returns the task handle of the task that owns the specified
               window handle is used.
 
 *******************************************************************************/
+
+#define Wimp_SendMessage 0x400E7
                                                             
 wimp_t identifyOwner(wimp_w window)
 {   
@@ -537,6 +523,157 @@ void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
    buffer[bufflen-1] = '\0';  
 }
 
+
+    
+/*******************************************************************************
+
+Function    : checkCapturedWindows
+
+Parameters  : void
+
+Returns     : void
+
+Description : Check all captured windows to make sure they still exist. If the
+              handle of a captured window is no longer valid it could be that
+              the task owning the window has deleted it, but it could also be
+              the case that the owner has exited, in which case there may be
+              other captured windows that no longer exist.  This function
+              deletes any tab for which the captured window no longer exists 
+              and leaves all !tabby instances in a consistent state.
+
+To do       : Determine whether wimp_get_wind_state is the cheapest way to
+              discover if a window handle is still valid.
+
+*******************************************************************************/
+
+void checkCapturedWindows(void)
+{                                                 
+   for (Tabby *tab = instances; tab != NULL; tab = tab->next)
+   {
+      // go through tabs in reverse as some tabs may be deleted as we go
+
+      for (int i = tab->n - 1; i >= 0; i--)
+      {
+         wimp_wstate wstate;
+
+         os_error *err = wimp_get_wind_state(tab->tab[i].handle, &wstate);
+
+         if (err != NULL)
+         {                                      
+            tab->tab[i].handle = 0;
+
+            tabPane_deleteTab(tab, i);
+         }                                               
+      }
+   }
+}
+
+/*******************************************************************************
+
+Function    : getWindowState
+
+Parameters  : wimp_w - window handle
+              wimp_wstate* - pointer to struct describing window state 
+
+Returns     : os_error* - pointer to struct describing error
+
+Description : Get the state of the specified window, but if the window handle
+              is not valid, this may indicate that one or more captured windows
+              may no longer exist.  If this is the case, a call is made to
+              checkCapturedWindows to delete tabs as necessary and leave all
+              !tabby instances in a consistent state.
+
+Notes       : This function must be used whenever the state of a captured
+              window is requried.
+
+*******************************************************************************/
+   
+#define ILLEGAL_WINDOW_HANDLE (648)
+
+os_error* getWindowState(wimp_w handle, wimp_wstate *wstate)
+{
+   os_error *err = wimp_get_wind_state(handle, wstate);
+
+   if (err != NULL && err->errnum == ILLEGAL_WINDOW_HANDLE)
+   {                         
+       LOG("guiWindowState", " err = %d : msg = '%s'", err->errnum, 
+          err->errmess);
+
+      // checkCapturedWindows();      
+   }                      
+
+   return err;
+}
+
+/*******************************************************************************
+
+Function    : getWindowInfo
+
+Parameters  : wimp_winfo* - pointer to struct describing window information 
+
+Returns     : os_error* - pointer to struct describing error
+
+Description : Get the window information of a window, but if the window handle
+              is not valid, this may indicate that one or more captured windows
+              may no longer exist.  If this is the case, a call is made to
+              checkCapturedWindows to delete tabs as necessary and leave all
+              !tabby instances in a consistent state.
+
+Notes       : This function must be used whenever the window information of a 
+              captured window is requried.
+
+*******************************************************************************/
+   
+os_error* getWindowInfo(wimp_winfo *winfo)
+{
+   os_error *err = wimp_get_wind_info(winfo);
+
+   if (err != NULL && err->errnum == ILLEGAL_WINDOW_HANDLE)
+   {          
+       LOG("guiWindowInfo", " err = %d : msg = '%s'", err->errnum, 
+          err->errmess);
+
+      checkCapturedWindows();      
+   }                      
+
+   return err;
+}
+
+/*******************************************************************************
+
+Function    : sendOpenWindowMessage
+
+Parameters  : wimp_w        - window handle
+              wimp_openstr* - pointer to window parameter structure
+
+Returns     : os_error* - pointer to struct describing error
+
+Description : Send an Open_Window_Request message to the specified window.
+
+*******************************************************************************/
+                               
+os_error* sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
+{
+   os_regset regs;
+
+   regs.r[0] = (int)wimp_EOPEN;
+   regs.r[1] = (int)openstr;
+   regs.r[2] = (int)handle;
+
+   os_error* err = os_swix(Wimp_SendMessage, &regs);        
+
+   if (err != NULL && err->errnum == ILLEGAL_WINDOW_HANDLE)
+   {                     
+       LOG("sendOpenWindowRequest", " err = %d : msg = '%s'", err->errnum, 
+          err->errmess);
+
+      // checkCapturedWindows();      
+   }                      
+
+   return err;
+}
+
+
 /*******************************************************************************
 *                                                                              * 
 *                            Instance List Management                          * 
@@ -628,6 +765,7 @@ Returns     :
 Description : 
 
 *******************************************************************************/          
+
 void tabPane_scrollLeft(Tabby *tabby)
 {
    tabby->tabPane_state.o.x -= TAB_WIDTH;
@@ -750,7 +888,7 @@ void tabPane_forceRedraw(Tabby *tabby)
    redrawstr.box.x1 = +4096;
    redrawstr.box.y1 = +4096;
    
-   wimp_force_redraw(&redrawstr);                  
+   wimpt_complain(wimp_force_redraw(&redrawstr));                  
 }
 
 /*******************************************************************************
@@ -772,18 +910,21 @@ Description : Release a window associated with a tab.  The window is re-opened
 void tabPane_releaseWindow(Tabby *tabby, int tab)
 {
    wimp_wstate wstate;
+                          
+   // just in case captured window has already dissapeared
 
-   wimp_get_wind_state(tabby->tab[tab].handle, &wstate); 
+   if (wimp_get_wind_state(tabby->tab[tab].handle, &wstate) != NULL)
+   {       
+      wstate.o.behind = -1;
+      wstate.o.x      = tabby->tab[tab].scx;
+      wstate.o.y      = tabby->tab[tab].scy;
+      wstate.o.box.x0 = tabby->active_state.o.box.x0 + 64; 
+      wstate.o.box.y0 = tabby->active_state.o.box.y0 - 64;
+      wstate.o.box.x1 = tabby->active_state.o.box.x1 + 64;
+      wstate.o.box.y1 = tabby->active_state.o.box.y1 - 64;
       
-   wstate.o.behind = -1;
-   wstate.o.x      = tabby->tab[tab].scx;
-   wstate.o.y      = tabby->tab[tab].scy;
-   wstate.o.box.x0 = tabby->active_state.o.box.x0 + 64; 
-   wstate.o.box.y0 = tabby->active_state.o.box.y0 - 64;
-   wstate.o.box.x1 = tabby->active_state.o.box.x1 + 64;
-   wstate.o.box.y1 = tabby->active_state.o.box.y1 - 64;
-      
-   sendOpenWindowRequest(tabby->tab[tab].handle, &wstate.o); 
+      sendOpenWindowRequest(tabby->tab[tab].handle, &wstate.o); 
+   }
 }
                                                                      
 /*******************************************************************************
@@ -816,26 +957,30 @@ void tabPane_selectTab(Tabby *tabby, int tab)
       {                 
          // change colour and appearance of the old active tab
 
-         wimp_get_icon_info(tabby->tabPane_handle, tabby->active*2, &info); 
+         wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, 
+                           tabby->active*2, &info)); 
 
          info.data.indirecttext.validstring[1] = '1';
 
-         wimp_set_icon_state(tabby->tabPane_handle, 2*tabby->active, 
-            (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
-            (wimp_iconflags)(0xF0000000U | wimp_IFILLED));    
+         wimpt_complain(wimp_set_icon_state(tabby->tabPane_handle, 
+                           2*tabby->active, 
+                           (wimp_iconflags)((1U << 28) | wimp_IFILLED), 
+                           (wimp_iconflags)(0xF0000000U | wimp_IFILLED)));    
          
-         // hide the old active window
+         // hide the old active window (which may have dissapeared)
 
-         wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
-                                 
-         tabby->active_state.o.behind = -3;
+         if (wimp_get_wind_state(tabby->active_handle, 
+                &tabby->active_state) == NULL)
+         {                       
+            tabby->active_state.o.behind = -3;
 
-         sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+            sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
 
-         // store scroll positions for when it is next active
+            // store scroll positions for when it is next active
 
-         tabby->tab[tabby->active].scx = tabby->active_state.o.x;
-         tabby->tab[tabby->active].scy = tabby->active_state.o.y;
+            tabby->tab[tabby->active].scx = tabby->active_state.o.x;
+            tabby->tab[tabby->active].scy = tabby->active_state.o.y;
+         }
       }
 
       // change the active tab
@@ -846,35 +991,37 @@ void tabPane_selectTab(Tabby *tabby, int tab)
 
       // change colour and appearance of the new active tab
 
-      wimp_get_icon_info(tabby->tabPane_handle, 2*tab, &info); 
+      wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, 2*tab, &info)); 
 
       info.data.indirecttext.validstring[1] = '2';
 
-      wimp_set_icon_state(tabby->tabPane_handle, 2*tab, 
-         (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
-         (wimp_iconflags)(0xF0000000U | wimp_IFILLED)); 
+      wimpt_complain(wimp_set_icon_state(tabby->tabPane_handle, 2*tab, 
+                        (wimp_iconflags)((12U << 28) | wimp_IFILLED), 
+                        (wimp_iconflags)(0xF0000000U | wimp_IFILLED))); 
   
       // change the title of the gui window
 
       tabby->active_winfo.w = tabby->active_handle;
+
+      wimp_winfo *winfo = (wimp_winfo*)(1 + (char*)&tabby->active_winfo);
        
-      wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + 
-         (char*)&tabby->active_winfo)));
-
-      if (tabby->active_winfo.info.titleflags & wimp_INDIRECT)
-      {    
-         wimp_t owner = identifyOwner(tabby->active_handle);
-             
-         getWindowTitle(&tabby->active_winfo, owner, tabby->gui_title, 256);
-      }
-      else
+      if (wimp_get_wind_info(winfo) != NULL)
       {
-         tabby->gui_title[0] = '\0';
+         if (tabby->active_winfo.info.titleflags & wimp_INDIRECT)
+         {    
+            wimp_t owner = identifyOwner(tabby->active_handle);
+             
+            getWindowTitle(&tabby->active_winfo, owner, tabby->gui_title, 256);
+         }
+         else
+         {
+            tabby->gui_title[0] = '\0';
 
-         strncat(tabby->gui_title, tabby->active_winfo.info.title.text, 12);
+            strncat(tabby->gui_title, tabby->active_winfo.info.title.text, 12);
+         }
+
+         forceTitleBarRedraw(tabby->gui_handle);
       }
-
-      forceTitleBarRedraw(tabby->gui_handle);
 
       // re-open adjust window
        
@@ -898,7 +1045,7 @@ void tabPane_selectTab(Tabby *tabby, int tab)
    r.box.x1 = tabby->tabPane_state.o.box.x1;
    r.box.y1 = tabby->tabPane_state.o.box.y1;
 
-   wimp_force_redraw(&r);     
+   wimpt_complain(wimp_force_redraw(&r));     
 
    gui_open(tabby, &tabby->gui_state.o);
 }
@@ -936,7 +1083,7 @@ void tabPane_deleteTab(Tabby *tabby, int tab)
 
       tabby->adjust_state.o.behind = -3;
       
-      wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
+      wimpt_complain(wimp_open_wind(&tabby->adjust_state.o));
    }
    else if (tab == tabby->active)
    {                 
@@ -944,8 +1091,11 @@ void tabPane_deleteTab(Tabby *tabby, int tab)
    }            
 
    // release window
-
-   tabPane_releaseWindow(tabby, tab);
+                         
+   if (tabby->tab[tab].handle != 0)
+   {
+      tabPane_releaseWindow(tabby, tab);
+   }
 
    // update the tab bar     
        
@@ -962,8 +1112,11 @@ void tabPane_deleteTab(Tabby *tabby, int tab)
 
       wimp_icon icon1, icon2;
 
-      wimp_get_icon_info(tabby->tabPane_handle, (i-1)*2, &icon1); 
-      wimp_get_icon_info(tabby->tabPane_handle, i*2,     &icon2); 
+      wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, 
+                       (i-1)*2, &icon1));
+ 
+      wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, 
+                        i*2, &icon2)); 
 
       strncpy(icon1.data.indirecttext.buffer, 
               icon2.data.indirecttext.buffer, 15);
@@ -971,14 +1124,14 @@ void tabPane_deleteTab(Tabby *tabby, int tab)
       strncpy(icon1.data.indirecttext.validstring, 
               icon2.data.indirecttext.validstring, 2);
 
-      wimp_set_icon_state(tabby->tabPane_handle, 2*(i-1), icon2.flags, 
-         (wimp_iconflags)0xFFFFFFFF);
+      wimpt_complain(wimp_set_icon_state(tabby->tabPane_handle, 2*(i-1), 
+                        icon2.flags, (wimp_iconflags)0xFFFFFFFF));
    }
 
    tabby->n--;               
 
-   wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n);
-   wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n+1);
+   wimpt_complain(wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n));
+   wimpt_complain(wimp_delete_icon(tabby->tabPane_handle, 2*tabby->n+1));
 
    tabPane_forceRedraw(tabby);
 
@@ -1010,8 +1163,8 @@ static void tabPane_mouseClickHandler(Tabby *tabby,
    {
       // tab clicked
 
-      wimp_get_icon_info(tabby->tabPane_handle, ms->i, &info);
-
+      wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, ms->i, &info));
+     
       char *valid = info.data.indirecttext.validstring;
             
       if (valid[1] == '1')
@@ -1778,6 +1931,16 @@ Description : Callback called by the alarm to repidly monitor the active
               If the state is STATE_CAPTURING, a new active tab is created
               and the system moves back into STATE_LOCKED.
 
+              The handles of all of the captured windows are checked for
+              validity.  If they are no longer valid it probably means they 
+              have been deleted by the task owning the window or the owner
+              task has exited.  If that happens, checkCapturedWindows deletes
+              tabs as required and ensures all !tabby instances are left in
+              a consistent state.  No other action is to required other than
+              to make sure no errors are generated elsewhere, this function
+              will detect the deleted captured window quickly enough for the
+              user not to notice.
+
 *******************************************************************************/
 
 void gui_monitor(int time, void *handle)
@@ -1785,65 +1948,74 @@ void gui_monitor(int time, void *handle)
    Tabby *tabby = (Tabby*)handle;
 
    int delay = 10;
+
+   // check to see if any of the windows have unexpectedly closed
+
+   checkCapturedWindows();
+
+   // perform appropriate behaviour for the current state
               
    if (tabby->state == STATE_SEARCHING)
    {           
       // seek window to capture by iterating through the window stack
                          
-      if (!wimp_get_wind_state(tabby->gui_handle, &tabby->gui_state))
-      { 
-         wimp_wstate wstate;
+      wimpt_complain(wimp_get_wind_state(tabby->gui_handle, &tabby->gui_state));
+      
+      wimp_wstate wstate;
                                         
-         wstate.o.behind = tabby->gui_state.o.behind;
+      wstate.o.behind = tabby->gui_state.o.behind;
 
-         while (wstate.o.behind != -1)         
-         { 
-            tabby->window = wstate.o.behind;
+      while (wstate.o.behind != -1)         
+      { 
+         tabby->window = wstate.o.behind;
 
-            wimp_get_wind_state(tabby->window, &wstate);  
+         wimpt_complain(wimp_get_wind_state(tabby->window, &wstate));  
                                           
-            if (intersects(&tabby->gui_state.o.box, &wstate.o.box))
+         if (intersects(&tabby->gui_state.o.box, &wstate.o.box))
+         {
+            if (gui_isCapturable(&wstate))
             {
-               if (gui_isCapturable(&wstate))
-               {
-                  delay = 100;        
+               delay = 100;        
                
-                  gui_setState(tabby, STATE_CAPTURING);
+               gui_setState(tabby, STATE_CAPTURING);
 
-                  break;
-               }
+               break;
             }
          }
       }
+      
    }
    else if (tabby->state == STATE_CAPTURING)
    {
       // re-open captured window beneath the tab bar
                      
       if (tabby->active_handle == 0)
-      {
-         wimp_get_wind_state(tabby->window, &tabby->active_state); 
+      {                                         
+         // just in case window dissapears during capture
+
+         if (wimp_get_wind_state(tabby->window, &tabby->active_state) != NULL) 
+         {
+            int height = tabby->active_state.o.box.y1-tabby->active_state.o.box.y0;
+
+            tabby->active_state.o.box.x0 = tabby->gui_state.o.box.x0;
+            tabby->active_state.o.box.y0 = tabby->gui_state.o.box.y1 - height;
+            tabby->active_state.o.box.x1 = tabby->gui_state.o.box.x1 - 40;
+            tabby->active_state.o.box.y1 = tabby->gui_state.o.box.y0 - 2;
+            tabby->active_state.o.w      = tabby->window;
+            tabby->active_state.o.behind = tabby->adjust_handle;
+
+            // re-open adjust button over the adjust size icon of the active window
       
-         int height = tabby->active_state.o.box.y1-tabby->active_state.o.box.y0;
+            tabby->adjust_state.o.box.x0 = tabby->active_state.o.box.x1;
+            tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - 40;  
+            tabby->adjust_state.o.box.x1 = tabby->adjust_state.o.box.x0 + 40;
+            tabby->adjust_state.o.box.y1 = tabby->adjust_state.o.box.y0 + 40;
+            tabby->adjust_state.o.behind = -1;  
 
-         tabby->active_state.o.box.x0 = tabby->gui_state.o.box.x0;
-         tabby->active_state.o.box.y0 = tabby->gui_state.o.box.y1 - height;
-         tabby->active_state.o.box.x1 = tabby->gui_state.o.box.x1 - 40;
-         tabby->active_state.o.box.y1 = tabby->gui_state.o.box.y0 - 2;
-         tabby->active_state.o.w      = tabby->window;
-         tabby->active_state.o.behind = tabby->adjust_handle;
-
-         // re-open adjust button over the adjust size icon of the active window
-      
-         tabby->adjust_state.o.box.x0 = tabby->active_state.o.box.x1;
-         tabby->adjust_state.o.box.y0 = tabby->active_state.o.box.y0 - 40;  
-         tabby->adjust_state.o.box.x1 = tabby->adjust_state.o.box.x0 + 40;
-         tabby->adjust_state.o.box.y1 = tabby->adjust_state.o.box.y0 + 40;
-         tabby->adjust_state.o.behind = -1;  
-
-         wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
+            wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
    
-         sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+            sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+         }
       }
 
       tabPane_addTab(tabby, tabby->window);      
@@ -1858,16 +2030,17 @@ void gui_monitor(int time, void *handle)
 
       memcpy(&wstate, &tabby->active_state, sizeof(wimp_wstate));
 
-      wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
-
-      if (different(&wstate.o.box, &tabby->active_state.o.box)) 
+      if (getWindowState(tabby->active_handle, &tabby->active_state) == NULL) 
       {
-         wstate.o.box.x0 = tabby->active_state.o.box.x0;
-         wstate.o.box.y0 = tabby->active_state.o.box.y1 + 2;
-         wstate.o.box.x1 = tabby->active_state.o.box.x1 + 40;
-         wstate.o.box.y1 = tabby->active_state.o.box.y1 + 66;
+         if (different(&wstate.o.box, &tabby->active_state.o.box)) 
+         {
+            wstate.o.box.x0 = tabby->active_state.o.box.x0;
+            wstate.o.box.y0 = tabby->active_state.o.box.y1 + 2;
+            wstate.o.box.x1 = tabby->active_state.o.box.x1 + 40;
+            wstate.o.box.y1 = tabby->active_state.o.box.y1 + 66;
 
-         gui_open(tabby, &wstate.o);
+            gui_open(tabby, &wstate.o);
+         }
       }
 
       // has the window title changed? 
@@ -1878,7 +2051,7 @@ void gui_monitor(int time, void *handle)
 
          winfo.w = tabby->active_handle;
        
-         wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
+         wimpt_complain(getWindowInfo((wimp_winfo*)(1 + (char*)&winfo)));
 
          if (winfo.info.titleflags & wimp_INDIRECT)
          {                                                                  
@@ -1931,6 +2104,8 @@ void gui_monitor(int time, void *handle)
 
       delay = 10;
    }
+   
+   // reset alarm for next time
 
    alarm_set(alarm_timenow() + delay, gui_monitor, tabby);
 }
