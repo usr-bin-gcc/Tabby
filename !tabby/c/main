@@ -2,9 +2,9 @@
 
 File        : c.main
 
-Date        : Tuesday 28th December 2021
+Date        : Sunday 9th January 2022
 
-Author      : Gavin Cawley
+Author      : Gavin Cawley and Cameron Cawley
 
 Description : Program to manage multiple (!SrcEdit) windows by grouping them 
               all under an external tab bar.
@@ -68,6 +68,8 @@ History     : 07/11/2021 v0.0.1 - Started work.
               08/01/2022 v0.9.5 - Now more robust against captured windows 
                                   being deleted (or the task owning the window
                                   closing down).
+              09/01/2022 v0.9.6 - Sprites now in application sprite area (CC).
+              09/01/2022 v1.0.0 - Initial release version.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
