@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 9th January 2022
+Date        : Tuesday 11th January 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -70,6 +70,7 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   closing down).
               09/01/2022 v0.9.6 - Sprites now in application sprite area (CC).
               09/01/2022 v1.0.0 - Initial release version.
+              11/01/2022 v1.0.1 - Spoke too soon, minor bug fix required ;o)
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -915,7 +916,7 @@ void tabPane_releaseWindow(Tabby *tabby, int tab)
                           
    // just in case captured window has already dissapeared
 
-   if (wimp_get_wind_state(tabby->tab[tab].handle, &wstate) != NULL)
+   if (wimp_get_wind_state(tabby->tab[tab].handle, &wstate) == NULL)
    {       
       wstate.o.behind = -1;
       wstate.o.x      = tabby->tab[tab].scx;
