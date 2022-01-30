@@ -11,3 +11,8 @@ Add a !SrcEdit window and then two !Draw windows.  Then quit !Draw.
 Test #3
 
 Add a !WinEd window from a saved template.
+
+Test #4
+
+Add a !WinEd window from a saved template and check that the size of the
+window can be adjusted correctly.

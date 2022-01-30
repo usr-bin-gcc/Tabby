@@ -535,7 +535,7 @@ void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
          break;
       }
    }
-
+   
    for (int i = 0; i < n; i++)
    {
       if (buffer[i] <= 0x20)
@@ -631,8 +631,6 @@ os_error* getWindowState(wimp_w handle, wimp_wstate *wstate)
    {                         
        LOG("guiWindowState", " err = %d : msg = '%s'", err->errnum, 
           err->errmess);
-
-      // checkCapturedWindows();      
    }                      
 
    return err;
@@ -664,9 +662,7 @@ os_error* getWindowInfo(wimp_winfo *winfo)
    if (err != NULL && err->errnum == ILLEGAL_WINDOW_HANDLE)
    {          
        LOG("guiWindowInfo", " err = %d : msg = '%s'", err->errnum, 
-          err->errmess);
-
-      checkCapturedWindows();      
+          err->errmess);      
    }                      
 
    return err;
@@ -699,8 +695,6 @@ os_error* sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
    {                     
        LOG("sendOpenWindowRequest", " err = %d : msg = '%s'", err->errnum, 
           err->errmess);
-
-      // checkCapturedWindows();      
    }                      
 
    return err;
@@ -1333,17 +1327,14 @@ Description : Create a new tab on the tab bar for the specified window and
 *******************************************************************************/
                                  
 void tabPane_addTab(Tabby *tabby, wimp_w handle)
-{
-   LOG("tabPane_addTab", "Entered '%s'", "tabPane_addTab");
-                                              
-
+{                                              
    // get info about the window
                       
    wimp_winfo info;
 
    info.w = handle;
    
-   wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&info)));
+   wimpt_complain(getWindowInfo((wimp_winfo*)(1 + (char*)&info)));
       
    char *label;
 
@@ -1351,9 +1342,9 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
    if (info.info.titleflags & wimp_INDIRECT)
    {       
-      char buffer[257];
+      char buffer[512];
 
-      getWindowTitle(&info, task, buffer, 257);
+      getWindowTitle(&info, task, buffer, 512);
 
       label = tabPane_extractLabel(buffer);
    }  
@@ -1367,7 +1358,6 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
       label = strdup(buffer);
    }    
-
                                               
    // create tab icon
 
@@ -1424,8 +1414,6 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    // re-open the tab pane
                                      
    gui_open(tabby, &tabby->gui_state.o);
-
-   LOG("tabPane_addTab", "Leaving '%s'", "tabPane_addTab");
 }                                                                                
 
 
@@ -1826,7 +1814,6 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
    }
 }
 
-
 /*******************************************************************************
 
 Function    : adjust_unknownEventProcessor
@@ -1936,8 +1923,6 @@ Tabby* gui_create(void)
    wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&winfo)));
    
    tabby->gui_title = winfo.info.title.indirecttext.buffer;
-
-   LOG("gui_create", "title = %p", tabby->gui_title);
      
    // gui initially empty
 
@@ -2063,15 +2048,13 @@ void gui_monitor(int time, void *handle)
       // re-open captured window beneath the tab bar
                      
       if (tabby->active_handle == 0)
-      {           
-         LOG("gui_monitor", "%s", "leopard!");
-                              
+      {                                         
          // just in case window dissapears during capture
 
          os_error *err = wimp_get_wind_state(tabby->window, 
                             &tabby->active_state);
 
-         if (err == NULL) 
+         if (err != NULL) 
          {
             int height = tabby->active_state.o.box.y1
                        - tabby->active_state.o.box.y0;
@@ -2095,23 +2078,11 @@ void gui_monitor(int time, void *handle)
    
             sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
          }      
-         else
-         {
-            wimpt_complain(err);
-         }
- 
-         LOG("gui_monitor", "%s", "cabbage!");
       }
                                        
-      LOG("gui_monitor", "calling %s", "tabPane_addTab");
-
       tabPane_addTab(tabby, tabby->window);
-
-      LOG("gui_monitor", "back from %s", "tabPane_addTab");
       
       gui_setState(tabby, STATE_LOCKED);
-
-      LOG("gui_monitor", "'%s'", "FOO!");
    }
    else if (tabby->active_handle != 0)
    {
@@ -2136,8 +2107,7 @@ void gui_monitor(int time, void *handle)
 
       // has the window title changed? 
 
-      /*
-      if (tabby->active_task != filer_task)
+      if (FALSE && tabby->active_task != filer_task)
       {
          wimp_winfo winfo;
 
@@ -2162,8 +2132,9 @@ void gui_monitor(int time, void *handle)
                forceTitleBarRedraw(tabby->gui_handle);
             }
          }
+
+         
       } 
-      */  
 
       // is the active window above the main gui in the stack?
 
@@ -2423,8 +2394,6 @@ int main(void)
    win_add_unknown_event_processor(messageEventProcessor, NULL);
                                                           
    filer_task = findTask("Filer");
-
-   LOG("main", "Filer task id = %d", filer_task);
 
    // main even processing loop
 
