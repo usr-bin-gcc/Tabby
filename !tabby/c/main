@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Tuesday 11th January 2022
+Date        : Sunday 30th January 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -74,6 +74,8 @@ History     : 07/11/2021 v0.0.1 - Started work.
               29/01/2022 v1.0.2 - Fixed bug that can crash !tabby if a task 
                                   that owns more than one captured window quits
                                   and one of them is the active window.
+              30/01/2020 v1.0.3 - Fixed bug that prevents windows containing
+                                  icons from being successfully captured.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -1333,14 +1335,15 @@ Description : Create a new tab on the tab bar for the specified window and
 void tabPane_addTab(Tabby *tabby, wimp_w handle)
 {
    LOG("tabPane_addTab", "Entered '%s'", "tabPane_addTab");
-                              
+                                              
+
    // get info about the window
                       
    wimp_winfo info;
 
    info.w = handle;
    
-   wimpt_complain(wimp_get_wind_info(&info));
+   wimpt_complain(wimp_get_wind_info((wimp_winfo*)(1 + (char*)&info)));
       
    char *label;
 
@@ -1348,9 +1351,9 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
    if (info.info.titleflags & wimp_INDIRECT)
    {       
-      char buffer[512];
+      char buffer[257];
 
-      getWindowTitle(&info, task, buffer, 512);
+      getWindowTitle(&info, task, buffer, 257);
 
       label = tabPane_extractLabel(buffer);
    }  
@@ -1364,7 +1367,8 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
       label = strdup(buffer);
    }    
-                                               
+
+                                              
    // create tab icon
 
    wimp_icreate icreatestr;
@@ -1768,11 +1772,13 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
 
             wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
 
-            // update the window information
+            // update the window information (but not the icon info)
                    
             tabby->active_winfo.w = tabby->active_handle;
 
-            wimpt_complain(wimp_get_wind_info(&tabby->active_winfo));
+            wimp_winfo *winfo = (wimp_winfo*)(1 + (char*)&tabby->active_winfo);
+
+            wimpt_complain(wimp_get_wind_info(winfo));
 
             // initiate drag operation
 
@@ -2019,7 +2025,7 @@ void gui_monitor(int time, void *handle)
 
    // check to see if any of the windows have unexpectedly closed
 
-   // checkCapturedWindows();
+   checkCapturedWindows();
 
    // perform appropriate behaviour for the current state
               
@@ -2051,7 +2057,6 @@ void gui_monitor(int time, void *handle)
             }
          }
       }
-      
    }
    else if (tabby->state == STATE_CAPTURING)
    {
@@ -2063,7 +2068,10 @@ void gui_monitor(int time, void *handle)
                               
          // just in case window dissapears during capture
 
-         if (wimp_get_wind_state(tabby->window, &tabby->active_state) != NULL) 
+         os_error *err = wimp_get_wind_state(tabby->window, 
+                            &tabby->active_state);
+
+         if (err == NULL) 
          {
             int height = tabby->active_state.o.box.y1
                        - tabby->active_state.o.box.y0;
@@ -2085,7 +2093,11 @@ void gui_monitor(int time, void *handle)
 
             wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
    
-            //sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+            sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+         }      
+         else
+         {
+            wimpt_complain(err);
          }
  
          LOG("gui_monitor", "%s", "cabbage!");
