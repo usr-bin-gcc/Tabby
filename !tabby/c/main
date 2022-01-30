@@ -521,8 +521,10 @@ void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
    wimp_t task = wimpt_task();
 
    // transfer the title into the buffer                       
+        
+   int n;
 
-   for (int n = min(srclen, bufflen); n <= bufflen; n++)
+   for (n = min(srclen, bufflen); n < bufflen; n++)
    {
       wimpt_complain(wimp_transferblock(owner, src, task, buffer, n));
 
@@ -532,10 +534,14 @@ void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
       }
    }
 
-   buffer[bufflen-1] = '\0';  
+   for (int i = 0; i < n; i++)
+   {
+      if (buffer[i] <= 0x20)
+      {
+         buffer[i] = '\0';
+      }
+   }
 }
-
-
     
 /*******************************************************************************
 
@@ -561,16 +567,12 @@ To do       : Determine whether wimp_get_wind_state is the cheapest way to
 #define ILLEGAL_WINDOW_HANDLE (648)
 
 void checkCapturedWindows(void)
-{                                
-   //LOG("checkCapturedWindows", "Entering %s", "checkCapturedWindows");
-                 
+{                                                 
    for (Tabby *tab = instances; tab != NULL; tab = tab->next)
    {
       // go through tabs in reverse as some tabs may be deleted as we go
 
-      LOG("checkCapturedWindows", "tab->n = %d", tab->n);
-
-      BOOL active = FALSE;
+      int active = -1;
 
       for (int i = tab->n - 1; i >= 0; i--)
       {
@@ -582,29 +584,21 @@ void checkCapturedWindows(void)
          {                
             if (i == tab->active)
             {
-               active = TRUE;
+               active = tab->active;
             }
                       
             tab->tab[i].handle = 0;
-
-            LOG("checkCapturedWindows", "Deleting tab %d", i);
 
             tabPane_deleteTab(tab, i);
 
          }                                             
       }
 
-      LOG("checkCapturedWindows", "Mark 1 : tab->n = %d", tab->n);
-
-      if (active)
+      if (active != -1)
       {
-         tabPane_selectNearbyTab(tab, tab->active);
+         tabPane_selectNearbyTab(tab, active);
       }  
-
-      LOG("checkCapturedWindows", "Mark 2 : tab->n = %d", tab->n);
    }
-
-   //LOG("checkCapturedWindows", "Leaving %s", "checkCapturedWindows");
 }
 
 /*******************************************************************************
@@ -864,12 +858,12 @@ char *tabPane_extractLabel(char *path)
 {  
    char *token[256];
 
-   char buffer[256];
+   char buffer[512];
 
    int n = 0;
 
    for (char *tok = strtok(path, "."); tok != NULL; tok = strtok(NULL, "."))
-   {
+   {              
       token[n++] = tok;
    }
                            
@@ -946,7 +940,7 @@ Description : Release a window associated with a tab.  The window is re-opened
 *******************************************************************************/
                                                             
 void tabPane_releaseWindow(Tabby *tabby, int tab)
-{
+{       
    wimp_wstate wstate;
                           
    // just in case captured window has already dissapeared
@@ -984,7 +978,7 @@ Description : Select a new active tab, changing the colour an appearance of the
 *******************************************************************************/
 
 void tabPane_selectTab(Tabby *tabby, int tab)
-{  
+{                                       
    wimp_redrawstr r;
    
    wimp_icon info;
@@ -1103,8 +1097,6 @@ Description :
 
 void tabPane_selectNearbyTab(Tabby *tabby, int tab)
 {     
-   LOG("tabPane_selectNearbyTab", "Entering %s", "tabPane_selectNearbyTab");
-
    if (tabby->n == 0)
    {                 
       LOG("tabPane_selectNearbyTab", "Mark %d", 1);
@@ -1118,20 +1110,12 @@ void tabPane_selectNearbyTab(Tabby *tabby, int tab)
       
       wimpt_complain(wimp_open_wind(&tabby->adjust_state.o));
    }
-   else if (tab == tabby->active)
+   else // if (tab == tabby->active)
    {                           
-      LOG("tabPane_selectNearbyTab", "Mark %d : tab = %d : tabby->n = %d ", 
-         2, tab, tabby->n);
-  
       tab = tab < tabby->n ? tab : tabby->n - 1;
 
-      LOG("tabPane_selectNearbyTab", "Mark %d : tab = %d : tabby->n = %d ", 
-         2, tab, tabby->n);
-
-      tabPane_selectTab(tabby, tab == 0 ? 1 : (tab-1));            
+      tabPane_selectTab(tabby, tab < 0 ? 0 : tab);            
    }
-
-   LOG("tabPane_selectNearbyTab", "Leaving %s", "tabPane_selectNearbyTab");
 }              
 
 /*******************************************************************************
@@ -1156,17 +1140,23 @@ Description : Delete a tab.  It isn't clear at the moment whether the correct
                        
 void tabPane_deleteTab(Tabby *tabby, int tab)
 {                                         
-   LOG("tabPane_deleteTab", "Entering %s", "tabPane_deleteTab");
-
    // release window if not defunct
                          
    if (tabby->tab[tab].handle != 0)
    { 
-      LOG("tabPane_deleteTab", "Calling %s", "tabPane_releaseWindow");
-
       tabPane_releaseWindow(tabby, tab);
+   }                                                            
 
-      LOG("tabPane_deleteTab", "Back from %s", "tabPane_releaseWindow");
+   // if it was the active tab, hide the adjust window
+
+   if (tab == tabby->active)
+   {                                
+      tabby->active        = -1;   
+      tabby->active_handle = 0;        
+                     
+      tabby->adjust_state.o.behind = -3;
+      
+      wimpt_complain(wimp_open_wind(&tabby->adjust_state.o));
    }
 
    // update the tab bar     
@@ -1208,8 +1198,6 @@ void tabPane_deleteTab(Tabby *tabby, int tab)
    tabPane_forceRedraw(tabby);
 
    gui_open(tabby, &tabby->gui_state.o);
-
-   LOG("tabPane_deleteTab", "Leaving %s", "tabPane_deleteTab");
 }           
 
 /*******************************************************************************
@@ -1343,7 +1331,9 @@ Description : Create a new tab on the tab bar for the specified window and
 *******************************************************************************/
                                  
 void tabPane_addTab(Tabby *tabby, wimp_w handle)
-{                              
+{
+   LOG("tabPane_addTab", "Entered '%s'", "tabPane_addTab");
+                              
    // get info about the window
                       
    wimp_winfo info;
@@ -1357,7 +1347,7 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    wimp_t task = identifyOwner(handle);
 
    if (info.info.titleflags & wimp_INDIRECT)
-   {                                                                  
+   {       
       char buffer[512];
 
       getWindowTitle(&info, task, buffer, 512);
@@ -1365,7 +1355,7 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
       label = tabPane_extractLabel(buffer);
    }  
    else
-   {                              
+   {       
       char buffer[13];          
 
       buffer[0] = '\0';
@@ -1374,7 +1364,7 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
 
       label = strdup(buffer);
    }    
-
+                                               
    // create tab icon
 
    wimp_icreate icreatestr;
@@ -1400,7 +1390,7 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    icreatestr.i.box.x1 = icreatestr.i.box.x0 + TAB_WIDTH;
    icreatestr.i.box.y1 = -16;
        
-   wimp_create_icon(&icreatestr, &icon);
+   wimpt_complain(wimp_create_icon(&icreatestr, &icon));
 
    // create tab close icon
 
@@ -1416,10 +1406,10 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    icreatestr.i.box.x1 = icreatestr.i.box.x0 + 13;
    icreatestr.i.box.y1 = -16 -16;
 
-   wimp_create_icon(&icreatestr, &icon);
+   wimpt_complain(wimp_create_icon(&icreatestr, &icon));
 
    // record window handle and scroll bar positions
-
+                                     
    tabby->tab[tabby->n].handle = handle;
    tabby->tab[tabby->n].scx    = info.info.scx;
    tabby->tab[tabby->n].scy    = info.info.scy;
@@ -1428,8 +1418,10 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    tabPane_selectTab(tabby, tabby->n++); 
           
    // re-open the tab pane
-
+                                     
    gui_open(tabby, &tabby->gui_state.o);
+
+   LOG("tabPane_addTab", "Leaving '%s'", "tabPane_addTab");
 }                                                                                
 
 
@@ -2027,7 +2019,7 @@ void gui_monitor(int time, void *handle)
 
    // check to see if any of the windows have unexpectedly closed
 
-   checkCapturedWindows();
+   // checkCapturedWindows();
 
    // perform appropriate behaviour for the current state
               
@@ -2066,7 +2058,9 @@ void gui_monitor(int time, void *handle)
       // re-open captured window beneath the tab bar
                      
       if (tabby->active_handle == 0)
-      {                                         
+      {           
+         LOG("gui_monitor", "%s", "leopard!");
+                              
          // just in case window dissapears during capture
 
          if (wimp_get_wind_state(tabby->window, &tabby->active_state) != NULL) 
@@ -2091,13 +2085,21 @@ void gui_monitor(int time, void *handle)
 
             wimpt_noerr(wimp_open_wind(&tabby->adjust_state.o));
    
-            sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
+            //sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
          }
+ 
+         LOG("gui_monitor", "%s", "cabbage!");
       }
+                                       
+      LOG("gui_monitor", "calling %s", "tabPane_addTab");
 
-      tabPane_addTab(tabby, tabby->window);      
-                                                        
+      tabPane_addTab(tabby, tabby->window);
+
+      LOG("gui_monitor", "back from %s", "tabPane_addTab");
+      
       gui_setState(tabby, STATE_LOCKED);
+
+      LOG("gui_monitor", "'%s'", "FOO!");
    }
    else if (tabby->active_handle != 0)
    {
@@ -2121,7 +2123,8 @@ void gui_monitor(int time, void *handle)
       }
 
       // has the window title changed? 
-                      
+
+      /*
       if (tabby->active_task != filer_task)
       {
          wimp_winfo winfo;
@@ -2133,21 +2136,22 @@ void gui_monitor(int time, void *handle)
          if (winfo.info.titleflags & wimp_INDIRECT)
          {                                                                  
             char buffer[512];
-                    
+                                       
             wimp_t owner = identifyOwner(tabby->active_handle);
              
             getWindowTitle(&winfo, owner, buffer, 512);
 
-            if (strncmp(tabby->gui_title, buffer, 255))
+            if (strncmp(tabby->gui_title, buffer, 512))
             {
-               strncpy(tabby->gui_title, buffer, 256);
+               strncpy(tabby->gui_title, buffer, 512);
 
-               tabby->gui_title[255] = '\0';
+               tabby->gui_title[511] = '\0';
 
                forceTitleBarRedraw(tabby->gui_handle);
             }
          }
-      }   
+      } 
+      */  
 
       // is the active window above the main gui in the stack?
 

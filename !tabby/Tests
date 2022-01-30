@@ -1,0 +1,13 @@
+This is a list of reproducible bugs that have affected some version of !tabby
+
+Test #1
+
+Add two !SrcEdit windows and detatch the first one.
+
+Test #2
+
+Add a !SrcEdit window and then two !Draw windows.  Then quit !Draw.
+
+Test #3
+
+Add a !WinEd window from a saved template.
