@@ -16,3 +16,7 @@ Test #4
 
 Add a !WinEd window from a saved template and check that the size of the
 window can be adjusted correctly.
+
+Test #5 
+
+Open a new !tabby instance and click adjust/menu on the empty tab bar

@@ -74,8 +74,10 @@ History     : 07/11/2021 v0.0.1 - Started work.
               29/01/2022 v1.0.2 - Fixed bug that can crash !tabby if a task 
                                   that owns more than one captured window quits
                                   and one of them is the active window.
-              30/01/2020 v1.0.3 - Fixed bug that prevents windows containing
+              30/01/2022 v1.0.3 - Fixed bug that prevents windows containing
                                   icons from being successfully captured.
+              04/02/2022 v1.0.4 - Fixed bug when menu clicked over an empty
+                                  tab bar.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -109,7 +111,13 @@ To do       : (a) Allow tabs to be rearranged by dragging.
                   and perhaps allow them to be dragged between !tabby 
                   instances.
 
-Acks        : Many thanks to Stuart Swales for his help and advice.
+              (k) Allow a file containing the paths of the files to load to
+                  be dragged to the icon on the icon bar to populate a new
+                  tab bar in a more efficient manner.
+
+Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks  
+              also to Rik Griffin, Fred Graute and Bernard Boase for reporting
+              bugs - much appreciated!
 
 *******************************************************************************/
 
@@ -149,6 +157,8 @@ Acks        : Many thanks to Stuart Swales for his help and advice.
                     
 #define IMENU_INFO 1
 #define IMENU_QUIT 2
+
+#define BUFFER_SIZE (512)
 
 menu imenu;       
 
@@ -1217,26 +1227,29 @@ static void tabPane_mouseClickHandler(Tabby *tabby,
 {     
    wimp_icon info;
 
-   if (ms->i%2 == 0)
+   if ((ms->i >= 0) && (ms->bbits & wimp_BLEFT))
    {
-      // tab clicked
-
-      wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, ms->i, &info));
-     
-      char *valid = info.data.indirecttext.validstring;
-            
-      if (valid[1] == '1')
+      if (ms->i%2 == 0)
       {
-         tabPane_selectTab(tabby, ms->i/2);
-      } 
-   }
-   else
-   {
-      // tab close button clicked      
+         // tab clicked
 
-      tabPane_deleteTab(tabby, ms->i/2);
+         wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, ms->i, &info));
+     
+         char *valid = info.data.indirecttext.validstring;
+            
+         if (valid[1] == '1')
+         {
+            tabPane_selectTab(tabby, ms->i/2);
+         } 
+      }
+      else
+      {
+         // tab close button clicked      
 
-      tabPane_selectNearbyTab(tabby, ms->i/2);
+         tabPane_deleteTab(tabby, ms->i/2);
+
+         tabPane_selectNearbyTab(tabby, ms->i/2);
+      }
    }
 }          
 
@@ -2107,7 +2120,7 @@ void gui_monitor(int time, void *handle)
 
       // has the window title changed? 
 
-      if (FALSE && tabby->active_task != filer_task)
+      if (tabby->active_task != filer_task)
       {
          wimp_winfo winfo;
 
