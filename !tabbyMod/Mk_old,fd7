@@ -1,0 +1,3 @@
+Dir <Obey$Dir>
+WimpSlot -Min 4096k
+amu -f Makefile standalone THROWBACK=-throwback

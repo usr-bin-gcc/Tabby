@@ -1,0 +1,8 @@
+| > !Tabby.!Boot
+|
+| Tabby - make windows tabby
+|
+set Tabby$Dir <Obey$Dir>
+set Tabby$Path <Obey$Dir>.
+
+IconSprites <Obey$Dir>.!Sprites

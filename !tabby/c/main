@@ -115,6 +115,9 @@ To do       : (a) Allow tabs to be rearranged by dragging.
                   be dragged to the icon on the icon bar to populate a new
                   tab bar in a more efficient manner.
 
+              (l) Allow files to be dragged onto the tab bar, and get !tabby to 
+                  open them and add them to the tab bar.
+
 Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks  
               also to Rik Griffin, Fred Graute and Bernard Boase for reporting
               bugs - much appreciated!
@@ -2145,8 +2148,6 @@ void gui_monitor(int time, void *handle)
                forceTitleBarRedraw(tabby->gui_handle);
             }
          }
-
-         
       } 
 
       // is the active window above the main gui in the stack?
@@ -2314,6 +2315,38 @@ Description : Task-level event processor.  In this case it responds to user
               wimp messages sent by other tasks.
 
 *******************************************************************************/
+                               
+#define TABBY_CAPTURE (0x5FFFFF)
+
+void tabby_capture(void)
+{                  
+   if (instances != NULL)
+   {
+      // find the window at the top of the window stack
+  
+      wimp_wstate wstate;
+
+      wimpt_complain(wimp_get_wind_state(instances->gui_handle, 
+         &wstate));
+                                              
+      while (wstate.o.behind != -1)         
+      {                                 
+         wimpt_complain(wimp_get_wind_state(wstate.o.behind, &wstate)); 
+
+         LOG("tabby_capture", "window = %d : behind = %d", wstate.o.w,
+            wstate.o.behind); 
+      }           
+               
+      // capture window (if capturable)
+      
+      if (gui_isCapturable(&wstate))
+      {                                                   
+         tabPane_addTab(instances, wstate.o.w);
+
+         gui_open(instances, &instances->gui_state.o);
+      }
+   }
+}
 
 BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 {
@@ -2341,6 +2374,13 @@ BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 
                return TRUE;
             }
+            case TABBY_CAPTURE:   // request to capture window at top of stack
+            {
+               LOG("messageEventProcessor", "%s event recieved", 
+                  "TABBY_CAPTURE");
+
+               tabby_capture();
+            }    
          }
 
          return FALSE;
@@ -2359,7 +2399,7 @@ BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 
 
 int main(void)
-{                        
+{                   
   event_setmask((wimp_emask)(wimp_EMREDRAW      |
                              wimp_EMPTRLEAVE    |
                              wimp_EMPTRENTER    |

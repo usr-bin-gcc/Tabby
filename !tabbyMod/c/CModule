@@ -1,0 +1,191 @@
+#include <stdio.h>
+#include <string.h>
+#include "kernel.h"
+#include "cmodulehdr.h"
+#include "wimp.h"
+#include "wimpt.h"
+
+/*
+ * An example of a module written in C - for pedagogic purposes only!
+ *
+ * It will respond to SWIs in the range 0x88000 + [0..63], or as otherwise
+ * specified in the Module Header description CModuleHdr.
+ * A SWI number which is 0 mod 4 will cause an error to be returned;
+ * SWI &88001 causes a divide by zero trap; any other value succeeds.
+ *
+ * It also responds to '*' commands tm1 and tm2. Tm1 is intended to take a list
+ * of 0 or more string arguments; tm2 a single integer. But you can type
+ * anything at either. Try also *HELP TM1 and *HELP TM2.
+ *
+ * To build this module, you must first assemble the module header and create
+ * the C header file for the module header using the cmhg tool -
+ *     use the command "cmhg cmhg.CModuleHdr o.cmodulehdr h.cmodulehdr".
+ * Then you need to compile this source "cc -c -zM c.cmodule".
+ * Finally link the objects with the Shared C Library stubs -
+ *     "link -o cmodule -m o.cmodule o.cmodulehdr c:o.stubs" does the trick.
+ *
+ * To install the module, just type "cmodule".
+ *
+ * Alternatively, use the makefile provided and amu as follows:
+ *     amu -f Makefile standalone
+ *
+ * To test it, try typing various variants of tm1 and tm2 at the '*' prompt.
+ * Try also the following from *BASIC:
+ * > SYS &88000                 -- should give a message and an error
+ * > SYS &88001                 -- should give a message and divide by 0
+ * > SYS &88002                 -- should just give a message
+ * >*foo                        -- any unknown command will do
+ * > SYS &88003                 -- should give a message saying 1 unknown
+ *                                 command since last SWI call
+ * > QUIT                       -- out of BASIC
+ *
+ * Remember: The module is called TestCModule (for *RMKILL, etc).
+ */
+
+#define  TM                     "TestCModule"
+#define  UNKNOWN_CMD_SERVICE    4
+#define  UNUSED(x)              (x = x)
+
+static _kernel_oserror tm_error = { 0x88000, "*** " TM " error ***" };
+
+static int unknown_cmd_count;
+static int other_service_call_count;
+static int xxx;
+
+_kernel_oserror *tm_swi(int swi_no, _kernel_swi_regs *r, void *private_word)
+{
+    UNUSED(private_word);
+    printf("%s: SWI no %d, r0 = %8x\n", TM, swi_no, r->r[0]);
+    printf(
+        "(%u unknown commands and %u other service calls since last call)\n",
+        unknown_cmd_count, other_service_call_count);
+    unknown_cmd_count = other_service_call_count = 0;
+    if (swi_no % 4 == 0)
+        return &tm_error;
+    else if (swi_no == 1)
+        xxx = 10 + swi_no / (swi_no-1);  /* this will fail, divide by zero */
+    return 0;
+}
+
+#define TaskManager_EnumerateTasks 0x42681
+
+wimp_t findTask(char *task)
+{
+   int buffer[16];
+
+   os_regset regs;
+
+   regs.r[0] = 0;
+                         
+   do
+   { 
+      regs.r[1] = (int)&buffer;
+      regs.r[2] = 64;
+
+      wimpt_complain(os_swix(TaskManager_EnumerateTasks, &regs));
+
+      for (int *block = buffer; block < (int*)regs.r[1]; block += 4)
+      {                               
+         if (strcmp(task, (char*)block[1]) == 0)
+         {
+            return block[0];
+         }
+      }  
+   }
+   while (regs.r[0] >= 0);
+
+   return 0;
+}
+
+#define TABBY_CAPTURE (0x5FFFFF) 
+                       
+void sendTabbyCapture(wimp_t task)
+{
+   wimp_msghdr msg;
+                      
+   msg.size      = 20;
+   msg.your_ref  = 0;
+   msg.action    = (wimp_msgaction)TABBY_CAPTURE;
+                   
+   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, task);
+}
+
+void tabbyCapture(void)
+{  
+   wimp_t task = findTask("Tabby");
+
+   printf("sending TABBY_CAPTURE to task %#x\n", task);
+
+   sendTabbyCapture(task);
+}
+
+_kernel_oserror *tm_cmd(const char *arg_string, int argc, int cmd_no, void *pw)
+{                                  
+   UNUSED(pw);                    
+
+   switch(cmd_no)
+   {
+      case 0:
+      case 1:     
+      {
+         const char *s = arg_string;
+
+         printf("%s: '*' command %d called with %d args - arg string ",
+            TM, cmd_no, argc);
+         
+         while (*s >= ' ' || *s == '\t') putchar(*s++);
+    
+         putchar('\n');
+       
+         break;
+      }
+      case 2:  
+      {        
+         tabbyCapture();
+
+         break;
+      }      
+   }
+
+   return 0;
+}
+
+void tm_service(int service_number, _kernel_swi_regs *r, void *private_word)
+{
+    UNUSED(r);
+    UNUSED(private_word);
+/*
+ *  In general, it is a Bad Thing to use printf inside an arbitrary
+ *  service call handler (e.g. in one that catches errors - call 6 -
+ *  as this one does. Therefore we merely count what's happening and
+ * print it out when the TestCModule's SWI is called.
+ */
+    if (service_number == UNKNOWN_CMD_SERVICE)
+        ++unknown_cmd_count;
+    else
+        ++other_service_call_count;
+}
+
+_kernel_oserror *tm_initialise(const char *cmd_tail, int podule_base, void *private_word)
+{
+    UNUSED(cmd_tail);
+    UNUSED(podule_base);
+    UNUSED(private_word);
+    unknown_cmd_count = other_service_call_count = 0;
+    return NULL;
+}
+
+int main(int argc, char *argv[])
+{
+    int i;
+
+    printf("%s: run code entered - ", TM);
+    if (argc == 0)
+        printf("no args\n");
+    else
+    {
+        for (i = 0; i < argc; i++) printf(" %s", argv[i]);
+        printf("\n");
+    }
+    return 0;
+}

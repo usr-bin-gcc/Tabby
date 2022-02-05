@@ -1,0 +1,33 @@
+# Project:   application
+
+
+# Toolflags:
+CCflags = -c -IRISC_OSLib: -zM -throwback
+C++flags = -c -IRISC_OSLib: -zM -throwback
+Linkflags = -m -c++ -o $@
+ObjAsmflags = -zM -throwback -NoCache 
+CMHGflags = 
+LibFileflags = -c -o $@
+Squeezeflags = -o $@
+ModSqzflags = -o $@
+
+OBJS = @.o.CModule @.o.CModuleHdr RISC_OSLib:o.risc_oslib C:o.stubs
+
+# Final targets:
+@.tabbyMod: $(OBJS)
+        Link $(Linkflags) $(OBJS)
+
+
+.INIT:
+        @CDir h
+        @CDir o
+
+# User-editable dependencies:
+
+# Static dependencies:
+
+@.o.CModule:  @.c.CModule @.h.CModuleHdr
+        cc $(ccflags) -o @.o.CModule @.c.CModule
+
+@.o.CModuleHdr @.h.CModuleHdr: @.cmhg.CModuleHdr
+        cmhg cmhg.CModuleHdr o.cmodulehdr h.cmodulehdr
