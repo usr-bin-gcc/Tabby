@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 30th January 2022
+Date        : Sunday 5th February 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -78,6 +78,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   icons from being successfully captured.
               04/02/2022 v1.0.4 - Fixed bug when menu clicked over an empty
                                   tab bar.
+              05/02/2022 v1.0.5 - Now listens for a WIMP user message 
+                                  requesting the capture of the window at the
+                                  top of the window stack.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
