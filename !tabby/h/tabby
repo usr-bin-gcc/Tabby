@@ -1,0 +1,75 @@
+/*******************************************************************************
+
+File        : c.tabby
+
+Date        : Sunday 6th February 2022
+
+Author      : Gavin Cawley 
+
+Description : API for other tasks to communicate with !tabby via WIMP user
+              messages.
+
+History     : 06/02/2022 v0.0.1 - initial version
+
+*******************************************************************************/
+
+#ifndef TABBY_HEADER
+#define TABBY_HEADER
+
+#include "wimp.h"
+
+#define TABBY_MESSAGE ((wimp_msgaction)0x5FFFFF)
+
+#define TABBY_CAPTURE_MSG 0x0
+
+typedef struct TabbyCaptureMsgStr
+{
+   wimp_w handle;
+
+   int idx;
+}
+TabbyCaptureMsg;
+         
+typedef struct TabbyMessageStr
+{            
+   wimp_msghdr hdr;
+
+   int type;
+
+   union
+   {
+      TabbyCaptureMsg capture;   
+   }
+   data;
+}
+TabbyMessage;              
+            
+/*******************************************************************************
+
+Function    : tabby_sendCaptureMsg
+
+Parameters  : wimp_t - handle of !tabby task
+              int    - your reference.
+              wimp_w - handle of window to capture
+              int    - index of tab bar (starting at zero) 
+
+Returns     : void
+
+Description : Send a user message to !tabby to request that it captures the
+              window specified by it's handle.  The second argument specifies
+              which tab bar should capture the window.  The tab bar index
+              starts at zero, rather than one.  If the index is invalid, the
+              window will be captured by the first tab bar; if no tab bar yet
+              exists, one will be created.  If the window handle is zero,
+              !tabby will attempt to capture the window at the top of the
+              window stack.  
+
+*******************************************************************************/
+
+void tabby_sendCaptureMsg(wimp_t task, int ref, wimp_w window, int index);
+
+
+#endif // TABBY_HEADER
+
+
+/******************************************************************************/

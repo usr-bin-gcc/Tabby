@@ -47,11 +47,8 @@ service-call-handler: tm_service 4 6 8
 
 command-keyword-table: tm_cmd
 
-   tm1(min-args:0, max-args:99,
-      help-text: "Syntax\ttm1 <filenames>\n"),
+   tabbyCapture(min-args:0, max-args:2,
+      help-text: "Syntax\t tabbyCapture <handle> <idx>\n")
 
-   tm2(min-args:1, max-args:1,
-      help-text: "Syntax\ttm2 <integer>\n"),
 
-   tabbyCapture(min-args:0, max-args:0,
-      help-text: "Syntax\t tabbyCapture\n") 
+

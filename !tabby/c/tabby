@@ -1,0 +1,36 @@
+/*******************************************************************************
+
+File        : c.tabby
+
+Date        : Sunday 6th February 2022
+
+Author      : Gavin Cawley 
+
+Description : API for other tasks to communicate with !tabby via WIMP user
+              messages.
+
+History     : 06/02/2022 v0.0.1 - initial version
+
+*******************************************************************************/
+
+#include "wimp.h"
+
+#include "tabby.h"
+
+void tabby_sendCaptureMsg(wimp_t task, int ref, wimp_w handle, int idx)
+{
+   TabbyMessage msg;
+
+   msg.hdr.size            = sizeof(wimp_msghdr) 
+                           + sizeof(int) 
+                           + sizeof(TabbyCaptureMsg);
+   msg.hdr.your_ref        = ref;
+   msg.hdr.action          = TABBY_MESSAGE;
+   msg.type                = TABBY_CAPTURE_MSG;
+   msg.data.capture.handle = handle;  
+   msg.data.capture.idx    = idx;
+             
+   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, task);
+}
+
+/******************************************************************************/

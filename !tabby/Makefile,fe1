@@ -11,7 +11,7 @@ LibFileflags = -c -o $@
 Squeezeflags = -o $@
 ModSqzflags = -o $@
 
-OBJS = @.o.main RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
+OBJS = @.o.main @.o.tabby RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
 
 # Final targets:
 @.application: $(OBJS)
@@ -25,8 +25,11 @@ OBJS = @.o.main RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
 
 # Static dependencies:
 
-@.o.main:  @.c.main <Logger$Dir>.h.logger
+@.o.main:  @.c.main @.h.tabby <Logger$Dir>.h.logger
         cc $(ccflags) -o @.o.main @.c.main 
+
+@.o.tabby:  @.c.tabby @.h.tabby <Logger$Dir>.h.logger
+        cc $(ccflags) -o @.o.tabby @.c.tabby 
 
 @.o.logger: <Logger$Dir>.h.logger <Logger$Dir>.c.logger 
         cc $(ccflags) -o @.o.logger <Logger$Dir>.c.logger 

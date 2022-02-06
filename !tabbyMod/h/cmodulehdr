@@ -16,7 +16,7 @@
 #define Module_VersionString             "0.00"
 #define Module_VersionNumber             0
 #ifndef Module_Date
-#define Module_Date                      "05 Feb 2022"
+#define Module_Date                      "06 Feb 2022"
 #endif
 
 
@@ -107,9 +107,7 @@ void tm_service(int service_number, _kernel_swi_regs *r, void *pw);
 #define configure_TOO_LARGE       ((_kernel_oserror *) 2)
 #define configure_TOO_MANY_PARAMS ((_kernel_oserror *) 3)
 
-#define CMD_tm1                         0
-#define CMD_tm2                         1
-#define CMD_tabbyCapture                2
+#define CMD_tabbyCapture                0
 
 _kernel_oserror *tm_cmd(const char *arg_string, int argc, int cmd_no, void *pw);
 

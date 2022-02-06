@@ -2,8 +2,8 @@
 
 
 # Toolflags:
-CCflags = -c -IRISC_OSLib: -zM -throwback
-C++flags = -c -IRISC_OSLib: -zM -throwback
+CCflags = -c -IRISC_OSLib: -zM -throwback -I<Logger$Dir> -I<Tabby$Dir>
+C++flags = -c -IRISC_OSLib: -zM -throwback -I<Logger$Dir> -I<Tabby$Dir>
 Linkflags = -m -c++ -o $@
 ObjAsmflags = -zM -throwback -NoCache 
 CMHGflags = 
@@ -11,7 +11,7 @@ LibFileflags = -c -o $@
 Squeezeflags = -o $@
 ModSqzflags = -o $@
 
-OBJS = @.o.CModule @.o.CModuleHdr RISC_OSLib:o.risc_oslib C:o.stubs
+OBJS = @.o.CModule @.o.tabby @.o.logger @.o.CModuleHdr RISC_OSLib:o.risc_oslib C:o.stubs 
 
 # Final targets:
 @.tabbyMod: $(OBJS)
@@ -31,3 +31,10 @@ OBJS = @.o.CModule @.o.CModuleHdr RISC_OSLib:o.risc_oslib C:o.stubs
 
 @.o.CModuleHdr @.h.CModuleHdr: @.cmhg.CModuleHdr
         cmhg cmhg.CModuleHdr o.cmodulehdr h.cmodulehdr
+
+@.o.logger: <Logger$Dir>.h.logger <Logger$Dir>.c.logger 
+        cc $(ccflags) -o @.o.logger <Logger$Dir>.c.logger 
+
+@.o.tabby: <Tabby$Dir>.h.tabby <Tabby$Dir>.c.tabby 
+        cc $(ccflags) -o @.o.tabby <Tabby$Dir>.c.tabby 
+

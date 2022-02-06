@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "kernel.h"
 #include "cmodulehdr.h"
 #include "wimp.h"
 #include "wimpt.h"
+
+#include "tabby.h"
 
 /*
  * An example of a module written in C - for pedagogic purposes only!
@@ -97,26 +100,13 @@ wimp_t findTask(char *task)
    return 0;
 }
 
-#define TABBY_CAPTURE (0x5FFFFF) 
-                       
-void sendTabbyCapture(wimp_t task)
-{
-   wimp_msghdr msg;
-                      
-   msg.size      = 20;
-   msg.your_ref  = 0;
-   msg.action    = (wimp_msgaction)TABBY_CAPTURE;
-                   
-   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, task);
-}
-
 void tabbyCapture(void)
 {  
    wimp_t task = findTask("Tabby");
 
    printf("sending TABBY_CAPTURE to task %#x\n", task);
 
-   sendTabbyCapture(task);
+   tabby_sendCaptureMsg(task, 0, 42, 0);
 }
 
 _kernel_oserror *tm_cmd(const char *arg_string, int argc, int cmd_no, void *pw)
@@ -125,26 +115,23 @@ _kernel_oserror *tm_cmd(const char *arg_string, int argc, int cmd_no, void *pw)
 
    switch(cmd_no)
    {
-      case 0:
-      case 1:     
-      {
-         const char *s = arg_string;
-
-         printf("%s: '*' command %d called with %d args - arg string ",
-            TM, cmd_no, argc);
-         
-         while (*s >= ' ' || *s == '\t') putchar(*s++);
-    
-         putchar('\n');
-       
-         break;
-      }
-      case 2:  
+      case 0:  
       {        
-         tabbyCapture();
+         char *str;
+                     
+         wimp_w handle = (int)strtoul(arg_string, &str, 0);
+
+         int idx = (int)strtoul(str, &str, 0);
+
+         wimp_t task = findTask("Tabby");
+
+         printf("sending TABBY_CAPTURE to task %#x, handle = %#x, idx = %d\n", 
+            task, handle, idx);
+ 
+         tabby_sendCaptureMsg(task, 0, handle, idx);
 
          break;
-      }      
+      }  
    }
 
    return 0;

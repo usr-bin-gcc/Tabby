@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 5th February 2022
+Date        : Sunday 6th February 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -81,6 +81,7 @@ History     : 07/11/2021 v0.0.1 - Started work.
               05/02/2022 v1.0.5 - Now listens for a WIMP user message 
                                   requesting the capture of the window at the
                                   top of the window stack.
+              06/02/2022 v1.1.0 - WIMP user message mechanism better established.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -149,7 +150,9 @@ Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks
 #include "logger.h"
 #else
 #define LOG(...)
-#endif
+#endif               
+
+#include "tabby.h"
    
 #define APP_NAME "Tabby"
 #define MENU_ITEMS ">Info,Quit"
@@ -723,14 +726,37 @@ os_error* sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
 *                                                                              * 
 *******************************************************************************/
 
+void instance_add(Tabby *tabby)
+{          
+   tabby->next = NULL;
+
+   if (instances == NULL)
+   {
+      instances = tabby;
+   }                      
+   else
+   {                                                   
+      for (Tabby *t = instances; t != NULL; t = t->next)
+      {
+         if (t->next == NULL)
+         {
+            t->next = tabby;
+
+            break;
+         }
+      }
+   }
+}
 
 Tabby* instance_new(void)
 { 
    Tabby *tabby = gui_create();
                 
-   tabby->next = instances;
-   instances   = tabby;
+   instance_add(tabby);
 
+   //tabby->next = instances;
+   //instances = tabby;
+                    
    return tabby;
 }                       
 
@@ -756,8 +782,7 @@ void instance_delete(Tabby *tabby)
          }
       }
    }
-}
-
+}                                 
 
 /*******************************************************************************
 *                                                                              * 
@@ -1986,7 +2011,7 @@ BOOL gui_isCapturable(wimp_wstate *wstate)
    }
 
    // must have an adjust size button
-
+   
    return (wstate->flags & wimp_WSIZE);
 }
                                            
@@ -2099,6 +2124,9 @@ void gui_monitor(int time, void *handle)
          }      
       }
                                        
+      LOG("gui_monitor", "capturing window handle %#x (%d)", tabby->window, 
+         tabby->window);
+
       tabPane_addTab(tabby, tabby->window);
       
       gui_setState(tabby, STATE_LOCKED);
@@ -2275,7 +2303,7 @@ static void imenuproc(void *handle, char *hit)
 
          break;
       }
-   }
+   }             
 }
 
 /*******************************************************************************
@@ -2292,8 +2320,8 @@ Description : Callback called whenever the left mouse button is clicked on
 
 *******************************************************************************/
 
-static void icon_left_click(wimp_i icon)
-{                                                      
+static Tabby* newInstance(void)
+{                                 
    Tabby *tabby = instance_new();
 
    tabby->gui_state.o.behind = -1;
@@ -2303,6 +2331,13 @@ static void icon_left_click(wimp_i icon)
    // start monitoring 
 
    alarm_set(alarm_timenow() + 10, gui_monitor, tabby);
+
+   return tabby;            
+}
+
+static void icon_left_click(wimp_i icon)
+{                  
+   newInstance();
 }
 
 /*******************************************************************************
@@ -2350,6 +2385,65 @@ void tabby_capture(void)
       }
    }
 }
+                              
+BOOL tabby_messageHandler(TabbyMessage *msg)
+{                                         
+   switch (msg->type)
+   {
+      case TABBY_CAPTURE_MSG:
+      {              
+         LOG("messageEventProcessor", 
+             "%s event recieved : handle = %d : idx = %d", 
+             "TABBY_CAPTURE_MSG", 
+             msg->data.capture.handle, 
+             msg->data.capture.idx);
+  
+         wimp_wstate wstate;
+
+         if (!wimp_get_wind_state(msg->data.capture.handle, &wstate))
+         {
+            // capture window (if capturable)
+      
+            if (gui_isCapturable(&wstate))
+            {                            
+               // determine which !tabby instance should capture window
+ 
+               if (instances == NULL)
+               {                      
+                  newInstance();
+               }   
+
+               Tabby *instance = instances;
+            
+               for (int i = 0; i < msg->data.capture.idx; i++)
+               { 
+                  if (instance == NULL)
+                  {
+                     break;
+                  }                
+
+                  instance = instance->next;
+
+                  LOG("messageEventProcessor", "i = %d", i); 
+               }
+
+               if (instance == NULL)
+               {
+                  instance = instances;
+               }
+                       
+               tabPane_addTab(instance, wstate.o.w);
+
+               gui_open(instance, &instance->gui_state.o);
+            }
+         }
+
+         return TRUE;
+      }
+   }
+
+   return FALSE;
+}
 
 BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 {
@@ -2377,12 +2471,12 @@ BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 
                return TRUE;
             }
-            case TABBY_CAPTURE:   // request to capture window at top of stack
+            case TABBY_MESSAGE:
             {
                LOG("messageEventProcessor", "%s event recieved", 
-                  "TABBY_CAPTURE");
+                  "TABBY_MESSAGE");
 
-               tabby_capture();
+               tabby_messageHandler((TabbyMessage*)&e->data.msg);
             }    
          }
 
