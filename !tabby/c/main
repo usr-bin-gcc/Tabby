@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Sunday 6th February 2022
+Date        : Tuesday 15th February 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -81,7 +81,9 @@ History     : 07/11/2021 v0.0.1 - Started work.
               05/02/2022 v1.0.5 - Now listens for a WIMP user message 
                                   requesting the capture of the window at the
                                   top of the window stack.
-              06/02/2022 v1.1.0 - WIMP user message mechanism better established.
+              06/02/2022 v1.1.0 - WIMP user message mechanism better 
+                                  established.
+              15/02/2022 v1.1.1 - Fixed bug on title monitoring.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -545,19 +547,20 @@ void getWindowTitle(wimp_winfo *info, wimp_t owner, char *buffer, int bufflen)
         
    int n;
 
-   for (n = min(srclen, bufflen); n < bufflen; n++)
+   for (n = min(srclen, bufflen); n <= bufflen; n++)
    {
       wimpt_complain(wimp_transferblock(owner, src, task, buffer, n));
 
       if (isTerminated(buffer, n))
-      {
+      {       
          break;
       }
    }
+
    
    for (int i = 0; i < n; i++)
    {
-      if (buffer[i] <= 0x20)
+      if (buffer[i] < 0x20)
       {
          buffer[i] = '\0';
       }
@@ -611,7 +614,6 @@ void checkCapturedWindows(void)
             tab->tab[i].handle = 0;
 
             tabPane_deleteTab(tab, i);
-
          }                                             
       }
 
@@ -1136,8 +1138,6 @@ void tabPane_selectNearbyTab(Tabby *tabby, int tab)
 {     
    if (tabby->n == 0)
    {                 
-      LOG("tabPane_selectNearbyTab", "Mark %d", 1);
-
       // ensure no active window and the adjust window is hidden
 
       tabby->active        = -1;   
@@ -1150,8 +1150,6 @@ void tabPane_selectNearbyTab(Tabby *tabby, int tab)
    else // if (tab == tabby->active)
    {                           
       tab = tab < tabby->n ? tab : tabby->n - 1;
-
-      tabPane_selectTab(tabby, tab < 0 ? 0 : tab);            
    }
 }              
 
@@ -1388,7 +1386,7 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    {       
       char buffer[512];
 
-      getWindowTitle(&info, task, buffer, 512);
+      getWindowTitle(&info, task, buffer, 256);
 
       label = tabPane_extractLabel(buffer);
    }  
@@ -2164,17 +2162,17 @@ void gui_monitor(int time, void *handle)
 
          if (winfo.info.titleflags & wimp_INDIRECT)
          {                                                                  
-            char buffer[512];
+            char buffer[256];
                                        
             wimp_t owner = identifyOwner(tabby->active_handle);
              
-            getWindowTitle(&winfo, owner, buffer, 512);
+            getWindowTitle(&winfo, owner, buffer, 256);
 
-            if (strncmp(tabby->gui_title, buffer, 512))
+            if (strncmp(tabby->gui_title, buffer, 256))
             {
-               strncpy(tabby->gui_title, buffer, 512);
+               strncpy(tabby->gui_title, buffer, 256);
 
-               tabby->gui_title[511] = '\0';
+               tabby->gui_title[255] = '\0';
 
                forceTitleBarRedraw(tabby->gui_handle);
             }
