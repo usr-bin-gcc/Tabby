@@ -84,6 +84,10 @@ History     : 07/11/2021 v0.0.1 - Started work.
               06/02/2022 v1.1.0 - WIMP user message mechanism better 
                                   established.
               15/02/2022 v1.1.1 - Fixed bug on title monitoring.
+              20/03/2022 v1.2.0 - Minor bug fixes and if the active file is
+                                  modified or saved, this is not reflected by
+                                  an asterisk in the label as well as the tile
+                                  bar.
 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
@@ -135,6 +139,7 @@ Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks
 #include <string.h>
                  
 #include "alarm.h"
+#include "bbc.h"
 #include "wimp.h"
 #include "wimpt.h"
 #include "resspr.h"
@@ -149,13 +154,28 @@ Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks
 #define DEBUG 1
 
 #if DEBUG
-#include "logger.h"
+#include "log.h"
 #else
 #define LOG(...)
 #endif               
 
 #include "tabby.h"
-   
+                                       
+
+/******************************************************************************
+*                                                                             *
+*                                   CONSTANTS                                 *
+*                                                                             *
+******************************************************************************/
+
+                                
+// SWI numbers
+
+#define OS_SpriteOp             0x2E
+#define OS_File                 0x08
+#define OS_SetColour            0x61
+#define Wimp_ForceRedraw        0x400D1
+
 #define APP_NAME "Tabby"
 #define MENU_ITEMS ">Info,Quit"
 
@@ -170,8 +190,15 @@ Acks        : Many thanks to Stuart Swales for his help and advice.  Thanks
 #define IMENU_QUIT 2
 
 #define BUFFER_SIZE (512)
+#define LABEL_SIZE  (32)
 
-menu imenu;       
+
+
+/******************************************************************************
+*                                                                             *
+*                              DATA STRUCTURES                                *
+*                                                                             *
+******************************************************************************/                                         
 
 typedef struct TabStr
 {  
@@ -223,12 +250,39 @@ typedef struct TabbyStr
 }
 Tabby;                 
 
+typedef struct
+{               
+   int mode;
+   int dx;
+   int dy;
+   int bpp;
+   int x;
+   int y;
+}
+ModeInfo;
+
+
+/******************************************************************************
+*                                                                             *
+*                                 GLOBAL DATA                                 *
+*                                                                             *
+******************************************************************************/
+
+ModeInfo modeInfo;
+
 Tabby *instances = NULL;
 
 wimp_t filer_task;     
 
+menu imenu;       
 
-// forward declarations of functions (To do - refactor away if feasible)
+
+/******************************************************************************
+*                                                                             *
+*                              FORWARD DECLARATIONS                           *
+*                                                                             *
+******************************************************************************/
+                                                   
 
 void gui_open(Tabby *tabby, wimp_openstr* openstr);
 
@@ -786,6 +840,7 @@ void instance_delete(Tabby *tabby)
    }
 }                                 
 
+
 /*******************************************************************************
 *                                                                              * 
 *                                    Tab Pane                                  * 
@@ -877,27 +932,27 @@ void tabPane_scrollRight(Tabby *tabby)
 
 Function    : tabPane_extractLabel
 
-Parameters  : char* - pointer to window title
-
+Parameters  : char* - pointer to window title                      
+              char* - pointer to label
+              
 Returns     : char* - pointer to tab label allocated on the heap
 
 Description : Determine a suitable tab label from the title string of a 
               window managed by !tabby.  If the title is a file path, then
               the label is the name of the file, however if the path ends
               c.<file> or h.<file>, the label will be <file>.h or <file>.c
-              respectively.  The label is allocated from the heap, so the
-              caller has responsibility for freeing it when no longer required.
-
-              Note that labels are always returned as 16 byte blocks so that
-              tab labels can always be copied safely.
+              respectively.  The label will be at most LABEL_SIZE characters
+              long. 
 
 *******************************************************************************/
                       
-char *tabPane_extractLabel(char *path)
-{  
-   char *token[256];
+void tabPane_extractLabel(char *path, char *label)
+{                          
+   LOG_PREAMBLE;
 
-   char buffer[512];
+   LOG("label = %#x", label);
+
+   char *token[BUFFER_SIZE/2];
 
    int n = 0;
 
@@ -907,31 +962,36 @@ char *tabPane_extractLabel(char *path)
    }
                            
    if (n > 1)
-   {
-      if (strcmp(token[n-2], "c") == 0 || 
-          strcmp(token[n-2], "h") == 0)
-      {
-         sprintf(buffer, "%s.%s", token[n-1], token[n-2]);
-      }   
-      else
-      {
-         sprintf(buffer, "%s", token[n-1]);
+   {                  
+      char *filename = token[n-1], *type = "", *modified = "";
+
+      if (strcmp(token[n-2], "c") == 0)
+      {        
+         type = ".c";
       }
+      else if (strcmp(token[n-2], "h") == 0)
+      {             
+         type = ".h";
+      }   
+
+      int len = strlen(filename);
+
+      if (filename[len-1] == '*')
+      {
+         filename[len-2] = '\0';
+
+         modified = " *";
+      }
+
+      LOG("filename = '%s' : type = '%s' : modified = '%s'", filename, type,
+         modified);
+
+      snprintf(label, LABEL_SIZE, "%s%s%s", filename, type, modified);
    }                      
    else
    {
-      sprintf(buffer, "%s", path);
+      snprintf(label, LABEL_SIZE, "%s", path);
    }
-                    
-   // return label in a fixed size (16 byte) buffer
-       
-   char *label = (char*)malloc(16);
-   
-   memcpy(label, buffer, 15);
-
-   label[15] = '\0';
-
-   return strdup(buffer); 
 }
 
 /*******************************************************************************
@@ -1147,9 +1207,11 @@ void tabPane_selectNearbyTab(Tabby *tabby, int tab)
       
       wimpt_complain(wimp_open_wind(&tabby->adjust_state.o));
    }
-   else // if (tab == tabby->active)
+   else 
    {                           
       tab = tab < tabby->n ? tab : tabby->n - 1;
+
+      tabPane_selectTab(tabby, tab < 0 ? 0 : tab);
    }
 }              
 
@@ -1278,6 +1340,8 @@ static void tabPane_mouseClickHandler(Tabby *tabby,
          tabPane_deleteTab(tabby, ms->i/2);
 
          tabPane_selectNearbyTab(tabby, ms->i/2);
+
+         gui_open(tabby, &tabby->gui_state.o);
       }
    }
 }          
@@ -1378,27 +1442,25 @@ void tabPane_addTab(Tabby *tabby, wimp_w handle)
    
    wimpt_complain(getWindowInfo((wimp_winfo*)(1 + (char*)&info)));
       
-   char *label;
+   char *label = (char*)malloc(LABEL_SIZE);          
+
+   LOG("label = %#x", label);
 
    wimp_t task = identifyOwner(handle);
 
    if (info.info.titleflags & wimp_INDIRECT)
    {       
-      char buffer[512];
+      char buffer[BUFFER_SIZE];
 
-      getWindowTitle(&info, task, buffer, 256);
+      getWindowTitle(&info, task, buffer, BUFFER_SIZE);
 
-      label = tabPane_extractLabel(buffer);
+      tabPane_extractLabel(buffer, label);
    }  
    else
    {       
-      char buffer[13];          
+      label[0] = '\0';
 
-      buffer[0] = '\0';
-
-      strncat(buffer, info.info.title.text, 12);
-
-      label = strdup(buffer);
+      strncat(label, info.info.title.text, 12);
    }    
                                               
    // create tab icon
@@ -1834,6 +1896,8 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
             parent.y1 = tabby->active_state.o.box.y1 
                       - max(124, tabby->active_winfo.info.minsize & 0xFFFF)
                       - y - 40;
+            parent.y0 = max(parent.y0,  - y );
+            parent.x1 = min(parent.x1,  modeInfo.x + x);
 
             dragstr.window    = tabby->adjust_handle;
             dragstr.box.x0    = tabby->adjust_state.o.box.x0;
@@ -2121,9 +2185,6 @@ void gui_monitor(int time, void *handle)
             sendOpenWindowRequest(tabby->active_handle, &tabby->active_state.o);
          }      
       }
-                                       
-      LOG("gui_monitor", "capturing window handle %#x (%d)", tabby->window, 
-         tabby->window);
 
       tabPane_addTab(tabby, tabby->window);
       
@@ -2162,17 +2223,26 @@ void gui_monitor(int time, void *handle)
 
          if (winfo.info.titleflags & wimp_INDIRECT)
          {                                                                  
-            char buffer[256];
+            char buffer[BUFFER_SIZE];
                                        
             wimp_t owner = identifyOwner(tabby->active_handle);
              
-            getWindowTitle(&winfo, owner, buffer, 256);
+            getWindowTitle(&winfo, owner, buffer, BUFFER_SIZE);
 
-            if (strncmp(tabby->gui_title, buffer, 256))
+            if (strncmp(tabby->gui_title, buffer, BUFFER_SIZE))
             {
-               strncpy(tabby->gui_title, buffer, 256);
+               strncpy(tabby->gui_title, buffer, BUFFER_SIZE);
 
-               tabby->gui_title[255] = '\0';
+               tabby->gui_title[BUFFER_SIZE - 1] = '\0';
+
+               wimp_icon icon;
+
+               wimpt_complain(wimp_get_icon_info(tabby->tabPane_handle, 
+                  tabby->active*2, &icon));
+
+               tabPane_forceRedraw(tabby);
+                              
+               tabPane_extractLabel(buffer, icon.data.indirecttext.buffer);      
 
                forceTitleBarRedraw(tabby->gui_handle);
             }
@@ -2390,8 +2460,7 @@ BOOL tabby_messageHandler(TabbyMessage *msg)
    {
       case TABBY_CAPTURE_MSG:
       {              
-         LOG("messageEventProcessor", 
-             "%s event recieved : handle = %d : idx = %d", 
+         LOG("%s event recieved : handle = %d : idx = %d", 
              "TABBY_CAPTURE_MSG", 
              msg->data.capture.handle, 
              msg->data.capture.idx);
@@ -2443,6 +2512,22 @@ BOOL tabby_messageHandler(TabbyMessage *msg)
    return FALSE;
 }
 
+void getModeInfo(void)
+{               
+   int dummy;
+                                         
+   (void)os_byte(135, &dummy, &modeInfo.mode);
+
+   modeInfo.dx  = bbc_vduvar(bbc_XEigFactor);
+   modeInfo.dy  = bbc_vduvar(bbc_YEigFactor);
+   modeInfo.bpp = 1 << bbc_vduvar(bbc_Log2BPP);
+   modeInfo.x   = 1 +  bbc_vduvar(bbc_XWindLimit);
+   modeInfo.y   = 1 +  bbc_vduvar(bbc_YWindLimit);
+
+   modeInfo.x <<= modeInfo.dx;
+   modeInfo.y <<= modeInfo.dy;
+}
+
 BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
 {
    switch (e->e)
@@ -2466,6 +2551,12 @@ BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
             case wimp_MCLOSEDOWN:
             {        
                wimp_closedown();
+
+               return TRUE;
+            }
+            case wimp_MMODECHANGE:
+            {        
+               getModeInfo();
 
                return TRUE;
             }
@@ -2515,6 +2606,8 @@ int main(void)
    dbox_init();     
 
    alarm_init();
+
+   getModeInfo();
 
    baricon("!tabby", (int)wimp_spritearea, icon_left_click);
 

@@ -1,0 +1,445 @@
+/*******************************************************************************
+
+File        : !Log.c.main 
+
+Date        : Sunday 26th September 2021
+
+Author      : Gavin Cawley
+
+Description : Simple application used to display and log debugging messages
+              sent by one or more wimp tasks.
+
+History     : 05/06/2021 - v1.00 adapted from !throwback application 
+              20/06/2021 - v1.01 updated to clear text box after message
+                           is entered        
+              26/09/2021 - v1.00 adapted from !tweedledee application
+
+*******************************************************************************/
+
+#include <stdlib.h>
+#include <stdio.h>
+                 
+#include "wimp.h"
+#include "wimpt.h"
+#include "resspr.h"
+#include "baricon.h"
+#include "res.h"
+#include "event.h"
+#include "menu.h"
+#include "dbox.h"
+#include "werr.h"
+#include "win.h"
+#include "template.h"
+#include "os.h"
+
+#include "textpane.h"
+#include "log.h"
+   
+#define TASK_NAME "Log"
+
+#define MENU_ITEMS ">Info,Quit"
+                    
+#define IMENU_INFO 1
+#define IMENU_QUIT 2
+
+menu imenu;
+
+wimp_w gui_handle;
+
+TextPane *textPane;
+
+/*******************************************************************************
+
+Function    : gui_mouse_click_handler
+
+Parameters  : wimp_mousestr* - pointer to struct describing mouse event
+              wimp_bbits     - additional information about mouse event
+
+Returns     : void
+
+Description : This function handles mouse click events for the main window.
+
+*******************************************************************************/
+
+void gui_mouse_click_handler(wimp_mousestr *ms, wimp_bbits mbits)
+{      
+   switch (ms->i)
+   {
+      case 0:
+      {
+         textPane_clear(textPane);
+
+         break;
+      }
+   }
+}
+
+/*******************************************************************************
+
+Function    : gui_open
+
+Parameters  : wimp_openstr* - pointer to struct containing required information
+
+Returns     : void
+
+Description : Open the main window (and it's associated text pane) at the
+              location specified by the argument.
+
+*******************************************************************************/
+
+void gui_open(wimp_openstr *openstr)
+{  
+   // open the dialog box at the appropriate level
+
+   wimpt_noerr(wimp_open_wind(openstr));         
+
+   // open the pane at that level                       
+   
+   wimp_wstate p_state;
+
+   if (wimpt_complain(wimp_get_wind_state(textPane->handle, &p_state)) == 0)
+   {
+      p_state.o.behind = openstr->behind;     
+
+      // place the pane relatve to the visible area of the dialog box
+                                              
+      p_state.o.box.x0 = openstr->box.x0 + 48;
+      p_state.o.box.y0 = openstr->box.y1 - 48 - 640;
+      p_state.o.box.x1 = openstr->box.x0 + 1440 - 48 - 48 + 8;
+      p_state.o.box.y1 = openstr->box.y1 - 48;      
+      p_state.o.y      = -1000; 
+       
+      wimpt_noerr(wimp_open_wind(&p_state.o));
+   }
+            
+   // re-open dialog box undeneath the pane
+                                        
+   openstr->behind = textPane->handle;
+   wimpt_noerr(wimp_open_wind(openstr));
+}
+
+/*******************************************************************************
+
+Function    : gui_eventHandler
+
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace
+
+Returns     : void
+
+Description : Handler function for basic events for the main window.  If the
+              return key is pressed over the message icon, the message is sent
+              to the twin task.  This may require looking up the task handle of
+              the task first, if this is the first message sent.
+
+*******************************************************************************/
+
+void gui_eventHandler(wimp_eventstr *e, void *handle)
+{
+   switch(e->e)
+   {
+      case wimp_EOPEN:   // maximise or minimise window 
+      {
+         gui_open(&(e->data.o));
+         
+         break;
+      }
+      case wimp_ECLOSE:   // close window
+      {
+         wimpt_noerr(wimp_close_wind(e->data.o.w));
+         wimpt_noerr(wimp_close_wind(textPane->handle));
+      
+         break;
+      }
+      case wimp_EBUT:   // mouse button change
+      {                                      
+         gui_mouse_click_handler(&(e->data.but.m), e->data.but.b);
+
+         break;
+      }
+      case wimp_EKEY:  // key press event
+      {        
+      }
+   }
+}
+
+/*******************************************************************************
+
+Function    : gui_create
+
+Parameters  : void
+
+Returns     : void
+
+Description : Create the main window from the appropriate template and 
+              initialise (but not display) it.
+
+*******************************************************************************/
+           
+void gui_create(void)
+{                        
+   wimp_wind *window = template_syshandle("Window");
+
+   if (window == 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   if (wimpt_complain(wimp_create_wind(window, &gui_handle)) != 0)
+   {
+      exit(EXIT_FAILURE);
+   }
+
+   win_register_event_handler(gui_handle, gui_eventHandler, 0);
+}
+
+/*******************************************************************************
+
+Function    : gui_closeDown
+
+Parameters  : void
+
+Returns     : void
+
+Description : Dispose of any resources held by the main window when it is no
+              longer required.
+
+*******************************************************************************/
+
+void gui_closeDown(void)
+{                       
+   textPane_destroy(textPane);
+}
+                                           
+/*******************************************************************************
+
+Function    : 
+
+Parameters  : 
+
+Returns     : 
+
+Description : 
+
+*******************************************************************************/
+
+int log_messageProcessor(LogMessage *msg)
+{             
+   switch (msg->type)
+   {
+      case LOG_REGISTER_CLIENT:
+      {
+         textPane_addLine(textPane, "RegisterClient request recieved\n");
+
+         return TRUE;
+      }
+      case LOG_LOG_MESSAGE:
+      {
+         char* line = msg->data.str;
+
+         for (char* str = line; *str != '\0'; str++)
+         {
+            if (*str == '\n')
+            {    
+               *str = '\0';
+
+               textPane_addLine(textPane, line);
+
+               line = str + 1;
+            }
+         }
+
+         if (*line != '\0')
+         {
+            textPane_addLine(textPane, line);
+         }
+
+         return TRUE;
+      }                                       
+   }
+
+   return FALSE;
+}
+
+/*******************************************************************************
+
+Function    : messageEventProcessor
+
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace (currently unused)
+
+Returns     : BOOL - TRUE if event fully handled, FALSE otherwise.
+
+Description : Task-level event processor.  In this case it responds to user
+              wimp messages sent by other tasks.
+
+*******************************************************************************/
+
+BOOL messageEventProcessor(wimp_eventstr *e, void *handle)
+{
+   if (e->e == wimp_ESEND || e->e == wimp_ESENDWANTACK)
+   {                       
+      switch (e->data.msg.hdr.action)
+      {           
+         case LOG_MESSAGE:
+         {
+            return log_messageProcessor((LogMessage*)&e->data.msg);
+         }                     
+      }
+   }
+
+   return FALSE;
+}
+
+/*******************************************************************************
+
+Function    : info_about
+
+Parameters  : void
+
+Returns     : void
+
+Description : Display the dialog box describing the application.
+
+*******************************************************************************/
+
+static void info_about(void)
+{
+   dbox d = dbox_new("ProgInfo");
+
+   if (d != NULL)
+   {
+      dbox_show(d);        
+      dbox_fillin(d);       
+      dbox_dispose(&d);     
+   }
+}
+
+/*******************************************************************************
+
+Function    : imenuproc
+
+Parameters  : void *handle - pointer to workspace (currently unused)
+
+Returns     : menu
+
+Description : Prepare menu before it is displayed.
+
+*******************************************************************************/
+
+static menu ipremenuproc(void *handle)
+{
+   return imenu;
+}
+
+/*******************************************************************************
+
+Function    : imenuproc
+
+Parameters  : void* - pointer to workspace (currently unused)
+              char* - which menu item was selected
+
+Returns     : void 
+
+Description : Process menu selection events.
+
+*******************************************************************************/
+
+static void imenuproc(void *handle, char *hit)
+{
+   switch (hit[0])  
+   {                
+      case IMENU_INFO:
+      {
+         info_about();
+
+         break;
+      }
+      case IMENU_QUIT:
+      {         
+         gui_closeDown();
+
+         exit(EXIT_SUCCESS);
+      }
+   }
+}
+
+/*******************************************************************************
+
+Function    : icon_left_click
+
+Parameters  : wimp_i 
+
+Returns     : void
+
+Description : Handle left-clicks on the applicationicon on the icon bar, by 
+              launching the main window.
+
+*******************************************************************************/
+
+static void icon_left_click(wimp_i icon)
+{
+   wimp_wstate win_state;
+
+   wimpt_complain(wimp_get_wind_state(gui_handle, &win_state));
+
+   gui_open(&(win_state.o));
+}
+
+/*******************************************************************************
+
+Function    : main
+
+Parameters  : void
+
+Returns     : int - EXIT_SUCCESS if program ran correctly, else EXIT_FAILURE
+
+Description : Main top-level function defining the application.
+
+*******************************************************************************/
+
+int main(void)
+{                 
+   wimpt_init(TASK_NAME);
+
+   res_init(TASK_NAME);   
+
+   template_init();              
+
+   dbox_init();     
+
+   textPane = textPane_create("pane");  
+
+   gui_create();
+
+   baricon("!" TASK_NAME, (int)resspr_area(), icon_left_click);
+
+   imenu = menu_new(TASK_NAME, MENU_ITEMS);
+                    
+   if (imenu == NULL)
+   {
+      return EXIT_FAILURE;
+   }
+
+   if (!event_attachmenumaker(win_ICONBAR, ipremenuproc, imenuproc, 0))
+   {
+      return EXIT_FAILURE;
+   }          
+
+   win_add_unknown_event_processor(messageEventProcessor, NULL);
+
+   // main even processing loop
+
+   while (TRUE) 
+   {
+      event_process();
+   }
+                    
+   gui_closeDown();
+
+   wimp_closedown();
+
+   return EXIT_SUCCESS;
+}
+
+/******************************************************************************/

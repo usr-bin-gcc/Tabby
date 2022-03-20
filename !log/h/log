@@ -1,0 +1,162 @@
+/*******************************************************************************
+
+File        : log.h
+
+Date        : Sunday 14th March 2022
+
+Author      : Gavin Cawley
+
+Description : Header file containing infomation on user message formats used
+              by the !log application for displaying and logging debugging
+              messages.
+
+History     : 26/09/2021 v1.0.0 - started work
+              14/10/2022
+
+*******************************************************************************/
+
+#ifndef LOG_HEADER
+#define LOG_HEADER
+                              
+#include "wimp.h"
+#include "sprite.h"
+
+typedef struct _LogRegisterClient
+{
+   wimp_t task;
+
+   char taskname[228];
+}
+LogRegisterClient;
+             
+typedef struct _LogMessage
+{              
+   wimp_msghdr hdr;
+    
+   int type;
+
+   union
+   {    
+      char str[232];  
+
+      LogRegisterClient client;
+   }   
+   data;
+}
+LogMessage;
+
+// User message ID
+                                   
+#define LOG_MESSAGE ((wimp_msgaction)0xC0FFEE)
+
+// Message types (likely to change as requirements become better understood) 
+
+#define LOG_REGISTER_CLIENT      (0x1)
+#define LOG_LOG_MESSAGE          (0x2)
+
+/*******************************************************************************
+
+Function    : log_task
+
+Parameters  : void
+
+Returns     : int - task handle of named task
+
+Description : This function interrogates the task manager to find the task
+              handle of a of the !log task (or zero if the task is not yet
+              running).
+
+*******************************************************************************/
+
+wimp_t log_task(void);
+
+/*******************************************************************************
+
+Function    : log_registerClient
+
+Parameters  : wimp_t - handle of client task
+              char*  - name of client task
+
+Returns     : void
+
+Description : Send a message to !log to register a new client wimp task.
+
+*******************************************************************************/
+
+void log_registerClient(wimp_t task, char *taskName);
+
+/*******************************************************************************
+
+Function    : log_print
+
+Parameters  : char* - string to be logged by !logger task 
+
+Returns     : void
+
+Description : Send a user message to the !log task containing a string to
+              be appended to the log.
+                          
+Notes       : The string must be 232 or fewer characters in length, including 
+              the null terminator.
+
+*******************************************************************************/
+
+void log_print(char *str);
+
+/*******************************************************************************
+
+Function    : log_printf
+
+Parameters  : char* - pointer to format string
+              ...   - additional arguments according to the format string
+
+Returns     : void
+
+Description : Send a formatted user message to the !log task (c.f. printf).
+
+*******************************************************************************/
+
+void log_printf(char* fmt, ...);
+
+/*******************************************************************************
+
+Function    : log_sprite
+
+Parameters  : sprite_header* - pointer to sprite header
+
+Returns     : void
+
+Description : Send information about a sprite to the !logger task.
+
+*******************************************************************************/
+               
+void log_sprite(sprite_header* sprite);
+         
+
+/*******************************************************************************
+*                                                                              *
+*                  MACROS USED TO ACCESS THE LOGGING FUNCTIONS                 *
+*                                                                              *
+*******************************************************************************/
+                       
+
+#ifdef DEBUG   // define active macros for debug versions
+
+#define LOG_PREAMBLE { log_printf("from function '%s' (line %d of %s):\n",\
+   __func__, __LINE__,__FILE__); }
+
+#define LOG(FORMAT, ...)  { log_printf(FORMAT, __VA_ARGS__); }
+
+#define LOG_SPRITE(sprite) { log_sprite(sprite); }
+
+#else   // define stubs for release versions
+
+#define LOG(...)
+#define LOG_PREAMBLE(...) 
+#define LOG_SPRITE(...)
+
+#endif 
+                       
+#endif // LOGGER
+
+/******************************************************************************/

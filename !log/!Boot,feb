@@ -1,0 +1,8 @@
+| > !log.!Boot
+|
+| Log - logging application for debuggin
+|
+set Log$Dir <Obey$Dir>
+set Log$Path <Obey$Dir>.
+
+IconSprites <Obey$Dir>.!Sprites

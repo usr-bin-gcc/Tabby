@@ -2,8 +2,8 @@
 
 
 # Toolflags:
-CCflags = -c -IRISC_OSLib: -throwback -I<Logger$Dir>
-C++flags = -c -IRISC_OSLib: -throwback -I<Logger$Dir>
+CCflags = -c -IRISC_OSLib: -throwback -I<Log$Dir>
+C++flags = -c -IRISC_OSLib: -throwback -I<Log$Dir>
 Linkflags = -aif -c++ -o $@
 ObjAsmflags = -throwback -NoCache 
 CMHGflags = 
@@ -11,7 +11,7 @@ LibFileflags = -c -o $@
 Squeezeflags = -o $@
 ModSqzflags = -o $@
 
-OBJS = @.o.main @.o.tabby RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
+OBJS = @.o.main @.o.tabby RISC_OSLib:o.risc_oslib C:o.stubs @.o.log
 
 # Final targets:
 @.application: $(OBJS)
@@ -25,11 +25,11 @@ OBJS = @.o.main @.o.tabby RISC_OSLib:o.risc_oslib C:o.stubs @.o.logger
 
 # Static dependencies:
 
-@.o.main:  @.c.main @.h.tabby <Logger$Dir>.h.logger
+@.o.main:  @.c.main @.h.tabby <Log$Dir>.h.log
         cc $(ccflags) -o @.o.main @.c.main 
 
-@.o.tabby:  @.c.tabby @.h.tabby <Logger$Dir>.h.logger
+@.o.tabby:  @.c.tabby @.h.tabby <Log$Dir>.h.log
         cc $(ccflags) -o @.o.tabby @.c.tabby 
 
-@.o.logger: <Logger$Dir>.h.logger <Logger$Dir>.c.logger 
-        cc $(ccflags) -o @.o.logger <Logger$Dir>.c.logger 
+@.o.log: <Log$Dir>.h.log <Log$Dir>.c.log 
+        cc $(ccflags) -o @.o.log <Log$Dir>.c.log

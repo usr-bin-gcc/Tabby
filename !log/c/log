@@ -1,0 +1,131 @@
+/*******************************************************************************
+
+File        : log.c
+
+Date        : Sunday 16th September 2021
+
+Author      : Gavin Cawley
+
+Description : Implementation of functions used to send user message to log
+              debugger messages with the !logger task.
+
+History     : 26/09/2021 v0.01 - started work
+
+*******************************************************************************/
+         
+#include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
+
+#include "wimp.h"
+#include "wimpt.h"
+
+#include "log.h"      
+
+static wimp_t logger_task_id = 0;
+                                                                   
+
+/*******************************************************************************
+*                                                                              *
+*      Interface functions (documentation comments in the header file)         *
+*                                                                              *
+*******************************************************************************/
+
+#define TaskManager_EnumerateTasks 0x42681
+
+wimp_t log_task(void)
+{
+   int buffer[16];
+
+   os_regset regs;
+
+   regs.r[0] = 0;
+                         
+   do
+   { 
+      regs.r[1] = (int)&buffer;
+      regs.r[2] = 64;
+
+      wimpt_complain(os_swix(TaskManager_EnumerateTasks, &regs));
+
+      for (int *block = buffer; block < (int*)regs.r[1]; block += 4)
+      {                               
+         if (strcmp("Logger", (char*)block[1]) == 0)
+         {
+            return block[0];
+         }
+      }  
+   }
+   while (regs.r[0] >= 0);
+
+   return 0;
+}
+
+void log_registerClient(wimp_t task, char *taskname)
+{                     
+   if (logger_task_id == 0)
+   {                         
+      logger_task_id = log_task();
+   }
+
+   LogMessage msg;   
+                      
+   //int len = strlen(taskname);
+
+   msg.hdr.size         = 256;
+   msg.hdr.your_ref     = 0;
+   msg.hdr.action       = (wimp_msgaction)LOG_MESSAGE;
+   msg.type             = LOG_REGISTER_CLIENT;    
+   msg.data.client.task = task;
+   
+   strncpy(msg.data.client.taskname, taskname, 228);                          
+                
+   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, logger_task_id);
+}
+
+void log_print(char *str)
+{          
+   LogMessage msg;
+
+   msg.hdr.size      = 256;
+   msg.hdr.your_ref  = 0;
+   msg.hdr.action    = (wimp_msgaction)LOG_MESSAGE;
+   msg.type          = LOG_LOG_MESSAGE;
+                          
+   strncpy(msg.data.str, str, 232);                          
+                
+   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, logger_task_id);
+}
+
+void log_printf(char *format, ...)
+{          
+   LogMessage msg;
+
+   va_list ap;              
+
+   va_start(ap, format);
+
+   msg.hdr.size      = 256;
+   msg.hdr.your_ref  = 0;
+   msg.hdr.action    = (wimp_msgaction)LOG_MESSAGE;
+   msg.type          = LOG_LOG_MESSAGE;
+                          
+   vsnprintf(msg.data.str, 232, format, ap);                          
+                
+   wimp_sendmessage(wimp_ESEND, (wimp_msgstr*)&msg, logger_task_id);
+}
+
+void log_sprite(sprite_header* sprite)
+{
+   log_printf("   next   = %d",     sprite->next);
+   log_printf("   name   = '%s'",   sprite->name);
+   log_printf("   width  = %d",     sprite->width);
+   log_printf("   height = %d",     sprite->height);
+   log_printf("   lbit   = %d",     sprite->lbit);
+   log_printf("   rbit   = %d",     sprite->rbit);
+   log_printf("   image  = %d",     sprite->image);
+   log_printf("   mask   = %d",     sprite->mask);
+   log_printf("   mode   = %#010x", sprite->mode); 
+}
+
+/******************************************************************************/

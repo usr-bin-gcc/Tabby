@@ -1,0 +1,75 @@
+# Project:   application
+
+
+# Toolflags:
+CCflags = -c -c99 -depend !Depend -IRISC_OSLib: -throwback
+C++flags = -c -depend !Depend -IRISC_OSLib: -throwback
+Linkflags = -aif -c++ -o $@
+ObjAsmflags = -throwback -NoCache -depend !Depend
+CMHGflags = 
+LibFileflags = -c -o $@
+Squeezeflags = -o $@
+ModSqzflags = -o $@
+
+OBJS = @.o.log @.o.main @.o.textpane RISC_OSLib:o.risc_oslib C:o.stubs
+
+# Final targets:
+@.application: $(OBJS)
+        Link $(Linkflags) $(OBJS)
+
+
+.INIT:
+        @CDir o
+
+# User-editable dependencies:
+
+# Static dependencies:
+
+@.o.main:  @.c.main @.h.textpane @.h.log 
+        cc $(ccflags) -o @.o.main @.c.main 
+
+@.o.log:  @.h.log @.c.log 
+        cc $(ccflags) -o @.o.log @.c.log 
+
+@.o.textpane:  @.c.textpane @.h.textpane 
+        cc $(ccflags) -o @.o.textpane @.c.textpane 
+
+
+# Dynamic dependencies:
+o.main:	c.main
+o.main:	RISC_OSLib:h.wimp
+o.main:	RISC_OSLib:h.os
+o.main:	C:h.kernel
+o.main:	RISC_OSLib:h.sprite
+o.main:	RISC_OSLib:h.wimpt
+o.main:	RISC_OSLib:h.resspr
+o.main:	RISC_OSLib:h.baricon
+o.main:	RISC_OSLib:h.res
+o.main:	RISC_OSLib:h.event
+o.main:	RISC_OSLib:h.menu
+o.main:	RISC_OSLib:h.menu
+o.main:	RISC_OSLib:h.dbox
+o.main:	RISC_OSLib:h.werr
+o.main:	RISC_OSLib:h.win
+o.main:	RISC_OSLib:h.template
+o.main:	RISC_OSLib:h.os
+o.main:	h.textpane
+o.main:	RISC_OSLib:h.wimp
+o.main:	RISC_OSLib:h.wimpt
+o.main:	RISC_OSLib:h.win
+o.main:	RISC_OSLib:h.template
+o.main:	RISC_OSLib:h.font
+o.main:	RISC_OSLib:h.drawmod
+o.main:	RISC_OSLib:h.colourtran
+o.main:	h.log
+o.main:	RISC_OSLib:h.wimp
+o.main:	RISC_OSLib:h.sprite
+o.log:	c.log
+o.log:	RISC_OSLib:h.wimp
+o.log:	RISC_OSLib:h.os
+o.log:	C:h.kernel
+o.log:	RISC_OSLib:h.sprite
+o.log:	RISC_OSLib:h.wimpt
+o.log:	h.log
+o.log:	RISC_OSLib:h.wimp
+o.log:	RISC_OSLib:h.sprite
