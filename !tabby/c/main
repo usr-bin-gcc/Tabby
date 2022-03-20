@@ -1897,7 +1897,7 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
                       - max(124, tabby->active_winfo.info.minsize & 0xFFFF)
                       - y - 40;
             parent.y0 = max(parent.y0,  - y );
-            parent.x1 = min(parent.x1,  modeInfo.x + x);
+            parent.x1 = min(parent.x1,  modeInfo.x - 40 - x);
 
             dragstr.window    = tabby->adjust_handle;
             dragstr.box.x0    = tabby->adjust_state.o.box.x0;
