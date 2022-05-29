@@ -2,7 +2,7 @@
 
 File        : c.main
 
-Date        : Tuesday 15th February 2022
+Date        : Sunday 29th May 2022
 
 Author      : Gavin Cawley and Cameron Cawley
 
@@ -88,7 +88,7 @@ History     : 07/11/2021 v0.0.1 - Started work.
                                   modified or saved, this is not reflected by
                                   an asterisk in the label as well as the tile
                                   bar.
-
+              29/05/2022 v1.2.1 - Very minor refactoring of adjust_EventHandler                 
 To do       : (a) Allow tabs to be rearranged by dragging.
 
               (b) Refactor tab pane so that tabs can be the minimum width for
@@ -775,6 +775,39 @@ os_error* sendOpenWindowRequest(wimp_w handle, wimp_openstr* openstr)
    return err;
 }
 
+/*******************************************************************************
+
+Function    : getWindowInfo
+
+Parameters  : wimp_winfo - pointer to window information structure
+
+Returns     : os_error* - pointer to struct describing error
+
+Description : This function is a veneer for wimp_get_wind_info, where we  only
+              require information about the window itself and do not require
+              information about the icons placed on the window.  This is more
+              convenient as we only need to allocate memory for the fixed-size
+              wimp_winfo structure, rather than for the structure and an unknown
+              amount of additional space for the icon information.
+
+              The wimp_get_wind_info function is itself a veneer for a call to
+              the OS_GetWindowInfo SWI (0x400CC).  The notes for this SWI 
+              include:
+
+                 "If bit 0 of R1 is set, then the icons are not returned and
+                  a buffer of 92 bytes is required for the Window Block up to
+                  and including the icon count." 
+                           
+              This explains the pointer arithmetic trickery that is hidden by
+              this veneer, it is just to set bit 0, but as all structures are
+              word-aligned, this does not change the address at which the
+              information is actually stored.
+
+*******************************************************************************/                                                               
+os_error *getWindInfo(wimp_winfo *winfo)
+{
+   return wimp_get_wind_info((wimp_winfo*)(1 + (char*)winfo));
+}
 
 /*******************************************************************************
 *                                                                              * 
@@ -1797,24 +1830,116 @@ void gui_eventHandler(wimp_eventstr *e, void *handle)
       }
    }
 }
-
+                                 
 /*******************************************************************************
 
-Function    : 
+Function    : adjust_startDrag
 
-Parameters  : 
+Parameters  : Tabby* - pointer to workspace for this tabby instance
+              int    - x offset of mouse click relative to bottom-left corner 
+              int    - y offset of mouse click relative to bottom-left corner 
 
-Returns     : 
+Returns     : void
 
-Description : 
+Description : Initiate a user drag operation, or restart a user drag if the 
+              active window is re-positioned rather than merely resized.  This
+              is necessary as it is likely to invalidate the parent window for
+              the drag.
 
 *******************************************************************************/
- 
+
+void adjust_startDrag(Tabby* tabby, int x, int y)
+{
+   // update the state of the active window 
+
+   wimpt_complain(wimp_get_wind_state(tabby->active_handle, 
+                     &tabby->active_state)); 
+
+   // update the window information (but not the icon info)
+                   
+   tabby->active_winfo.w = tabby->active_handle;
+
+   wimpt_complain(getWindInfo(&tabby->active_winfo));
+
+   // determine the parent window constraining the movement of the pointer
+
+   wimp_box parent;
+
+   int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
+
+   parent.x0 = tabby->active_state.o.box.x0 
+             + max(420, (tabby->active_winfo.info.minsize >> 16));  
+   parent.y0 = tabby->active_state.o.box.y1
+             - tabby->active_winfo.info.ex.y1
+             + tabby->active_winfo.info.ex.y0
+             - yoff + y + 4;
+   parent.x1 = tabby->active_state.o.box.x0 
+             + tabby->active_winfo.info.ex.x1
+             - tabby->active_winfo.info.ex.x0
+             + x;
+   parent.y1 = tabby->active_state.o.box.y1 
+             - max(124, tabby->active_winfo.info.minsize & 0xFFFF)
+             + y - 40;
+   parent.y0 = max(parent.y0,  - y );
+   parent.x1 = min(parent.x1,  modeInfo.x - 40 + x - 2);
+
+   // initiate drag operation
+
+   wimp_dragstr dragstr;
+
+   dragstr.window    = tabby->adjust_handle;
+   dragstr.box.x0    = tabby->adjust_state.o.box.x0;
+   dragstr.box.y0    = tabby->adjust_state.o.box.y0;
+   dragstr.box.x1    = tabby->adjust_state.o.box.x1;
+   dragstr.box.y1    = tabby->adjust_state.o.box.y1;
+   dragstr.parent.x0 = parent.x0;
+   dragstr.parent.y0 = parent.y0;
+   dragstr.parent.x1 = parent.x1;
+   dragstr.parent.y1 = parent.y1;
+   dragstr.type      = wimp_USER_HIDDEN;
+
+   wimp_drag_box(&dragstr);      
+
+   // claim wimp_ENULL events to monitor the progress of the drag operation
+
+   win_claim_idle_events(tabby->adjust_handle);
+}
+                                          
+/*******************************************************************************
+
+Function    : adjust_eventHandler
+
+Parameters  : wimp_eventstr* - pointer to struct describing the event
+              void*          - pointer to workspace for this tabby instance
+
+Returns     : void
+
+Description : Main event handler for the adjust size window (there is also an
+              unknown event handler to deal with end of user drag events).
+              In addition to the usual wimp_EOPEN and wimp_ECLOSE events,
+              the handler also deals with:
+
+              (i) wimp_EBUTT - if a mouse button is clicked and held/dragged,
+                  a user drag is initiated to resize the active window (and
+                  hence the tabby window).
+
+              (ii) wimp_ENULL - to monitor the user drag to resize the active
+                   window.  This is made more complex by the need for the 
+                   window to expand if the adjust icon is at the bottom or
+                   right-most extent of the desktop.
+
+              The variables x and y are used to store the offset of the 
+              position of the initial mouse click from the corner of the
+              adjust window.  This is made static as it is required whenever
+              the drag is updated.
+
+*******************************************************************************/
+
 void adjust_eventHandler(wimp_eventstr *e, void *handle)
 {                                                                                
    Tabby *tabby = (Tabby*)handle;
-            
-   static int x, y;   // drag offsets 
+                                                                 
+   static int x, y;   // drag offsets relative to window (x1, y0)
 
    switch(e->e)                                 
    {   
@@ -1832,10 +1957,35 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
                                                  
          int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
 
-         tabby->active_state.o.box.x1 = mousestr.x + x;
-         tabby->active_state.o.box.y0 = mousestr.y + y + yoff;
+         tabby->active_state.o.box.x1 = mousestr.x - x;
+         tabby->active_state.o.box.y0 = mousestr.y + y - 40 + yoff;
          openstr.box.x1               = tabby->active_state.o.box.x1 + 40;
          openstr.behind               = -1;
+
+         if (mousestr.y + y - 40 <= 2)
+         {   
+            if (openstr.box.y1 + 40 < modeInfo.y)
+            {
+               int dy = min(16, modeInfo.y - openstr.box.y1 - 40 - 2);
+
+               tabby->active_state.o.box.y1 += dy;
+               openstr.box.y1               += dy;
+               openstr.box.y0               += dy;           
+            }
+         }
+
+         LOG("mouse = (%d, %d) : x = %d : y = %d", mousestr.x, mousestr.y, x, y);
+
+         if (mousestr.x - x + 40 + 2 == modeInfo.x)
+         {                       
+            if (openstr.box.x0 > 0)
+            {
+               int dx = min(16, openstr.box.x0);
+
+               tabby->active_state.o.box.x0 -= dx;
+               openstr.box.x0               -= dx;
+            }
+         }
 
          gui_open(tabby, &openstr);    
 
@@ -1860,59 +2010,10 @@ void adjust_eventHandler(wimp_eventstr *e, void *handle)
       {
          if (e->data.but.m.bbits == 0x40)
          {                          
-            // update the state of the active window 
+            x = e->data.but.m.x - tabby->adjust_state.o.box.x0;
+            y = e->data.but.m.y - tabby->adjust_state.o.box.y0;
 
-            wimp_get_wind_state(tabby->active_handle, &tabby->active_state); 
-
-            // update the window information (but not the icon info)
-                   
-            tabby->active_winfo.w = tabby->active_handle;
-
-            wimp_winfo *winfo = (wimp_winfo*)(1 + (char*)&tabby->active_winfo);
-
-            wimpt_complain(wimp_get_wind_info(winfo));
-
-            // initiate drag operation
-
-            wimp_dragstr dragstr;
-
-            x = tabby->adjust_state.o.box.x0 - e->data.but.m.x;
-            y = tabby->adjust_state.o.box.y0 - e->data.but.m.y;
-
-            int yoff = (tabby->active_winfo.info.flags & wimp_WHSCR) ? 40 : 0; 
-
-            wimp_box parent;
-
-            parent.x0 = tabby->active_state.o.box.x0 
-                      + max(420, (tabby->active_winfo.info.minsize >> 16));  
-            parent.y0 = tabby->active_state.o.box.y1
-                      - tabby->active_winfo.info.ex.y1
-                      + tabby->active_winfo.info.ex.y0
-                      - yoff - y + 4;
-            parent.x1 = tabby->active_state.o.box.x0 
-                      + tabby->active_winfo.info.ex.x1
-                      - tabby->active_winfo.info.ex.x0
-                      - x;
-            parent.y1 = tabby->active_state.o.box.y1 
-                      - max(124, tabby->active_winfo.info.minsize & 0xFFFF)
-                      - y - 40;
-            parent.y0 = max(parent.y0,  - y );
-            parent.x1 = min(parent.x1,  modeInfo.x - 40 - x);
-
-            dragstr.window    = tabby->adjust_handle;
-            dragstr.box.x0    = tabby->adjust_state.o.box.x0;
-            dragstr.box.y0    = tabby->adjust_state.o.box.y0;
-            dragstr.box.x1    = tabby->adjust_state.o.box.x1;
-            dragstr.box.y1    = tabby->adjust_state.o.box.y1;
-            dragstr.parent.x0 = parent.x0;
-            dragstr.parent.y0 = parent.y0;
-            dragstr.parent.x1 = parent.x1;
-            dragstr.parent.y1 = parent.y1;
-            dragstr.type      = wimp_USER_HIDDEN;
-
-            wimp_drag_box(&dragstr);
-
-            win_claim_idle_events(tabby->adjust_handle);
+            adjust_startDrag(tabby, x, y);
          }
 
          break;
